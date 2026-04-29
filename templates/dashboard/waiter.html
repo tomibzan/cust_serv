@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<h2 class="text-xl font-bold mb-4">Your Tables</h2>
+
+<div id="tables-section" class="grid grid-cols-2 gap-4 mb-6">
+    {% for session in sessions %}
+        <div class="bg-white p-4 rounded shadow" data-table="{{ session.table.number }}">
+            <p class="font-semibold">Table {{ session.table.number }}</p>
+            <p class="text-sm text-gray-500">Session {{ session.id }}</p>
+
+            <a href="{% url 'create_order' session.id %}"
+               class="bg-indigo-500 text-white px-3 py-1 rounded mt-2 inline-block hover:bg-indigo-600 transition">
+               Create Order
+            </a>
+        </div>
+    {% empty %}
+        <p>No active tables</p>
+    {% endfor %}
+</div>
+
+<h2 class="text-xl font-bold mb-4">Live Notifications</h2>
+
+<div id="notifications" class="space-y-3">
+    {% for notif in notifications %}
+        <div id="notif-{{ notif.id }}" data-order="{{ notif.order.id }}">
+             data-order="{{ notif.order.id|default:'' }}"
+             class="bg-yellow-100 p-4 rounded shadow flex justify-between items-center">
+
+            <div>
+                <p class="font-semibold">{{ notif.message }}</p>
+                <p class="text-xs text-gray-500">
+                    {{ notif.created_at|timesince }} ago
+                </p>
+            </div>
+
+            <button onclick="acknowledge({{ notif.id }})"
+                class="bg-green-500 text-white px-3 py-1 rounded">
+                Noted
+            </button>
+        </div>
+    {% empty %}
+        <p id="no-notifs" class="text-gray-500">No notifications</p>
+    {% endfor %}
+</div>
+
+<h2 class="text-xl font-bold mb-4">Service Requests</h2>
+
+<div id="requests-section" class="space-y-3">
+    {% for req in requests %}
+        <div class="bg-yellow-100 p-4 rounded flex justify-between items-center">
+            <div>
+                <p>Table {{ req.table.number }}</p>
+                <p class="text-sm">{{ req.message }}</p>
+            </div>
+            <a href="{% url 'ack_request' req.id %}"
+               class="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 transition">
+                Acknowledge
+            </a>
+        </div>
+    {% empty %}
+        <p>No pending requests</p>
+    {% endfor %}
+</div>
+
+<h2 class="text-xl font-bold mb-4 mt-6">Orders</h2>
+
+<div id="orders-section" class="space-y-3">
+    {% for order in orders %}
+        <div class="bg-white p-4 rounded shadow flex justify-between items-center">
+            <div>
+                <p class="font-semibold">
+                    Order #{{ order.id }} - Table {{ order.session.table.number }}
+                </p>
+                <p class="text-sm text-gray-500">
+                    Status: {{ order.status }}
+                </p>
+            </div>
+
+            <div class="flex gap-2">
+                {% if order.status == "ready" %}
+                    <a href="{% url 'mark_served' order.id %}"
+                       class="bg-purple-500 text-white px-3 py-1 rounded hover:bg-purple-600">
+                        Mark Served
+                    </a>
+                {% endif %}
+            </div>
+        </div>
+    {% empty %}
+        <p class="text-gray-500">No active orders</p>
+    {% endfor %}
+</div>
+
+<audio id="notif-sound" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg"></audio>
+
+<!-- 🔄 PARTIAL REFRESH (SAFE) -->
+<script>
+setInterval(() => {
+    fetch(window.location.href)
+        .then(res => res.text())
+        .then(html => {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+
+            ["tables-section", "requests-section", "orders-section"].forEach(id => {
+                const newEl = doc.querySelector("#" + id);
+                const curEl = document.querySelector("#" + id);
+
+                if (newEl && curEl && newEl.innerHTML !== curEl.innerHTML) {
+                    curEl.innerHTML = newEl.innerHTML;
+                }
+            });
+        });
+}, 15000);
+</script>
+
+<!-- 🔔 WEBSOCKET -->
+<script>
+function connectSocket() {
+    const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+    const socket = new WebSocket(protocol + window.location.host + "/ws/notifications/");
+
+    socket.onopen = () => console.log("✅ WebSocket connected");
+
+    socket.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+
+    console.log("📨 WS EVENT:", data);
+
+    // 💰 PAYMENT EVENT
+    if (data.type === "payment_done") {
+        console.log("💰 Payment done:", data.order_id);
+
+        document.querySelectorAll(`[data-order="${data.order_id}"]`)
+            .forEach(el => el.remove());
+
+        return;
+    }
+
+    // 🔔 READY / NORMAL NOTIFICATION
+    if (data.type === "order_ready" || !data.type) {
+        renderNotification(data);
+        playSound();
+        highlightTableFromMessage(data.message);
+    }
+};
+
+    socket.onclose = () => {
+        console.warn("🔌 Reconnecting...");
+        setTimeout(connectSocket, 3000);
+    };
+}
+
+connectSocket();
+</script>
+
+<!-- ✅ RENDER NOTIFICATION -->
+<script>
+function renderNotification(data) {
+
+    const id = data.id || Date.now();
+
+    if (document.getElementById("notif-" + id)) return;
+
+    const container = document.getElementById("notifications");
+
+    const el = document.createElement("div");
+    el.id = "notif-" + id;
+
+    // 🔥 IMPORTANT: attach order reference
+    if (data.order_id) {
+        el.setAttribute("data-order", data.order_id);
+    }
+
+    el.className = "bg-yellow-100 p-4 rounded shadow flex justify-between items-center";
+
+    el.innerHTML = `
+        <div>
+            <p class="font-semibold">${data.message}</p>
+        </div>
+        <button onclick="acknowledge(${id})"
+            class="bg-green-500 text-white px-3 py-1 rounded">
+            Noted
+        </button>
+    `;
+
+    container.prepend(el);
+}
+
+</script>
+
+<!-- ✅ ACK -->
+<script>
+function acknowledge(id) {
+    fetch(`/api/notifications/${id}/read/`, {
+        method: "PATCH",
+        headers: {
+            "X-CSRFToken": getCSRFToken()
+        }
+    })
+    .then(() => {
+        const el = document.getElementById("notif-" + id);
+        if (el) el.remove();
+    });
+}
+</script>
+
+<!-- 🔊 SOUND -->
+<script>
+function playSound() {
+    const audio = document.getElementById("notif-sound");
+    if (audio) {
+        audio.currentTime = 0;
+        audio.play().catch(() => {});
+    }
+}
+</script>
+
+<!-- ✨ TABLE HIGHLIGHT -->
+<script>
+function highlightTableFromMessage(message) {
+    const match = message.match(/Table (\d+)/);
+    if (!match) return;
+
+    const el = document.querySelector(`[data-table="${match[1]}"]`);
+    if (!el) return;
+
+    el.classList.add("ring-4", "ring-green-500");
+
+    setTimeout(() => {
+        el.classList.remove("ring-4", "ring-green-500");
+    }, 8000);
+}
+</script>
+
+<script>
+function getCSRFToken() {
+    return document.cookie.split('; ')
+        .find(row => row.startsWith('csrftoken='))
+        ?.split('=')[1];
+}
+</script>
+
+{% endblock %}

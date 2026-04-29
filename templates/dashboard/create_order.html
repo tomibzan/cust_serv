@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<h2 class="text-xl font-bold mb-4">
+    Create Order — Table {{ session.table.number }}
+</h2>
+
+<form method="POST">
+    {% csrf_token %}
+
+    <div class="space-y-3">
+
+        {% for product in products %}
+            <div class="flex justify-between items-center bg-white p-3 rounded shadow">
+                <span>{{ product.name }}</span>
+
+                <input type="number"
+                       name="product_{{ product.id }}"
+                       value="0"
+                       min="0"
+                       class="w-20 border rounded px-2 py-1">
+            </div>
+        {% endfor %}
+
+    </div>
+
+    <button type="submit"
+        class="mt-4 bg-green-600 text-white px-4 py-2 rounded">
+        Submit Order
+    </button>
+
+</form>
+
+{% endblock %}

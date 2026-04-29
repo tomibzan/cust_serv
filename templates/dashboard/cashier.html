@@ -1,0 +1,332 @@
+<!-- templates/dashboard/cashier.html -->
+{% extends "base.html" %}
+
+{% block content %}
+
+<h2 class="text-2xl font-bold mb-6">💰 Cashier Dashboard</h2>
+
+<div id="orders-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    {% for order_item in orders %}
+    <div id="order-{{ order_item.order.id }}" class="bg-white p-4 rounded shadow border-l-4 border-green-500">
+        <div class="flex justify-between items-start mb-3">
+            <div>
+                <!-- Use order_item.order, not order.order -->
+                <h3 class="font-bold text-lg">Table {{ order_item.order.session.table.number }}</h3>
+                <p class="text-sm text-gray-500">Order #{{ order_item.order.id }}</p>
+                <p class="text-xs text-gray-400">Waiter: {{ order_item.order.session.assigned_employee.get_full_name|default:order_item.order.session.assigned_employee.username }}</p>
+            </div>
+            <span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">{{ order_item.order.status|title }}</span>
+        </div>
+        
+        <!-- Items List -->
+        <div class="border-t border-b py-3 my-3 max-h-48 overflow-y-auto">
+            {% for item in order_item.items %}
+            <div class="flex justify-between py-1 text-sm">
+                <span>{{ item.product.name }} x{{ item.quantity }}</span>
+                <span>{{ item.price_at_time }} ETB</span>
+            </div>
+            {% endfor %}
+        </div>
+        
+        <!-- Subtotal -->
+        <div class="flex justify-between font-semibold mb-2">
+            <span>Subtotal:</span>
+            <span id="subtotal-{{ order_item.order.id }}">{{ order_item.subtotal }} ETB</span>
+        </div>
+        
+        <!-- Tip Input -->
+        <div class="mb-3">
+            <label class="block text-sm font-medium text-gray-700 mb-1">
+                💝 Optional Tip (for waiter)
+            </label>
+            <div class="flex gap-2">
+                <input type="number" id="tip-{{ order_item.order.id }}" 
+                       class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 sm:text-sm"
+                       placeholder="0.00" step="0.01" min="0" value="0"
+                       onchange="updateTotal({{ order_item.order.id }}, {{ order_item.subtotal }})">
+                <div class="flex gap-1">
+                    <button type="button" onclick="setTip({{ order_item.order.id }}, 5, {{ order_item.subtotal }})" 
+                            class="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">5</button>
+                    <button type="button" onclick="setTip({{ order_item.order.id }}, 10, {{ order_item.subtotal }})" 
+                            class="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">10</button>
+                    <button type="button" onclick="setTip({{ order_item.order.id }}, 15, {{ order_item.subtotal }})" 
+                            class="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">15</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Total with Tip -->
+        <div class="flex justify-between font-bold text-lg mb-3 pt-2 border-t">
+            <span>Total to Pay:</span>
+            <span id="total-{{ order_item.order.id }}">{{ order_item.subtotal }} ETB</span>
+        </div>
+        
+        <!-- Payment Method -->
+        <div class="mb-3">
+            <label class="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
+            <select id="method-{{ order_item.order.id }}" 
+                    class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500"
+                    onchange="toggleProofSection({{ order_item.order.id }})">
+                <option value="cash">💵 Cash</option>
+                <option value="pos">💳 POS Card</option>
+                <option value="digital">📱 Digital Payment</option>
+            </select>
+        </div>
+        
+        <!-- Payment Proof Section -->
+        <div id="proof-section-{{ order_item.order.id }}" class="mb-3 hidden">
+            <label class="block text-sm font-medium text-gray-700 mb-1">Payment Proof</label>
+            <input type="file" id="proof-{{ order_item.order.id }}" accept="image/*" class="block w-full text-sm text-gray-500">
+            <input type="text" id="proof-ref-{{ order_item.order.id }}" 
+                   placeholder="Transaction reference number" 
+                   class="mt-2 w-full rounded-md border-gray-300 shadow-sm sm:text-sm">
+        </div>
+        
+        <!-- Process Payment Button -->
+        <button onclick="processPayment(this, {{ order_item.order.id }}, {{ order_item.subtotal }})"
+                class="w-full bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition font-semibold">
+            💰 Process Payment
+        </button>
+    </div>
+    {% empty %}
+    <p id="no-orders-message" class="text-gray-500 col-span-3 text-center py-8">No pending orders ready for payment</p>
+    {% endfor %}
+</div>
+
+<audio id="notif-sound" src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"></audio>
+
+<script>
+// Global variables
+let socket;
+let reconnectAttempts = 0;
+const maxReconnectAttempts = 10;
+let heartbeatInterval;
+
+// Helper functions
+function setTip(orderId, amount, subtotal) {
+    const tipInput = document.getElementById(`tip-${orderId}`);
+    if (tipInput) {
+        tipInput.value = amount;
+        updateTotal(orderId, subtotal);
+    }
+}
+
+function updateTotal(orderId, subtotal) {
+    const tipInput = document.getElementById(`tip-${orderId}`);
+    const totalSpan = document.getElementById(`total-${orderId}`);
+    
+    if (tipInput && totalSpan) {
+        const tip = parseFloat(tipInput.value) || 0;
+        const total = subtotal + tip;
+        totalSpan.innerText = total.toFixed(2) + ' ETB';
+    }
+}
+
+function toggleProofSection(orderId) {
+    const method = document.getElementById(`method-${orderId}`).value;
+    const proofSection = document.getElementById(`proof-section-${orderId}`);
+    
+    if (method === 'digital') {
+        proofSection.classList.remove('hidden');
+    } else {
+        proofSection.classList.add('hidden');
+    }
+}
+
+async function processPayment(button, orderId, subtotal) {
+    const tip = document.getElementById(`tip-${orderId}`)?.value || 0;
+    const method = document.getElementById(`method-${orderId}`)?.value || 'cash';
+    const proofFile = document.getElementById(`proof-${orderId}`)?.files[0];
+    const proofRef = document.getElementById(`proof-ref-${orderId}`)?.value || '';
+    
+    // Show loading state
+    const originalText = button.innerText;
+    button.innerText = '⏳ Processing...';
+    button.disabled = true;
+    
+    const formData = new FormData();
+    formData.append('order_id', orderId);
+    formData.append('tip', tip);
+    formData.append('method', method);
+    if (proofFile) formData.append('proof_image', proofFile);
+    if (proofRef) formData.append('proof_reference', proofRef);
+    
+    try {
+        const response = await fetch('/payments/create/', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCSRFToken()
+            },
+            body: formData
+        });
+        
+        const data = await response.json();
+        console.log("Payment response:", data);
+        
+        if (data.status === 'approved') {
+            showNotification(`✅ Payment completed! Total: ${data.amount} ETB`, 'success');
+            removeOrderCard(orderId);
+        } else if (data.status === 'created') {
+            if (method === 'cash') {
+                // Auto-approve cash payments
+                const approveResponse = await fetch(`/payments/${data.payment_id}/approve/`, {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRFToken': getCSRFToken(),
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const approveData = await approveResponse.json();
+                
+                if (approveData.status === 'approved') {
+                    showNotification(`✅ Payment approved! Total: ${data.amount} ETB (Tip: ${data.tip} ETB)`, 'success');
+                    removeOrderCard(orderId);
+                } else {
+                    showNotification(`⚠️ Payment created but approval failed`, 'error');
+                }
+            } else {
+                showNotification(`💰 Payment created! Amount: ${data.amount} ETB. Pending approval.`, 'info');
+                removeOrderCard(orderId);
+            }
+        } else if (data.status === 'exists') {
+            showNotification(`⚠️ Payment already pending for this order`, 'info');
+        } else {
+            showNotification(`❌ Payment failed: ${data.error || 'Unknown error'}`, 'error');
+        }
+    } catch (err) {
+        console.error('Payment error:', err);
+        showNotification('❌ Payment processing error', 'error');
+    } finally {
+        button.innerText = originalText;
+        button.disabled = false;
+    }
+}
+
+function removeOrderCard(orderId) {
+    const el = document.getElementById(`order-${orderId}`);
+    if (el) {
+        el.remove();
+        console.log(`Removed order #${orderId} from cashier dashboard`);
+        
+        // Check if no orders left
+        const container = document.getElementById("orders-container");
+        if (container.children.length === 0) {
+            container.innerHTML = '<p id="no-orders-message" class="text-gray-500 col-span-3 text-center py-8">No pending orders ready for payment</p>';
+        }
+    }
+}
+
+function showNotification(message, type = 'info') {
+    const colors = {
+        success: 'bg-green-500',
+        error: 'bg-red-500',
+        info: 'bg-blue-500',
+        warning: 'bg-yellow-500'
+    };
+    
+    const notification = document.createElement('div');
+    notification.className = `fixed top-4 right-4 ${colors[type]} text-white p-4 rounded shadow-lg z-50 transform transition-all duration-300 translate-x-full max-w-md`;
+    notification.innerHTML = `<p class="font-bold">${message}</p>`;
+    document.body.appendChild(notification);
+    
+    setTimeout(() => notification.classList.remove('translate-x-full'), 100);
+    setTimeout(() => {
+        notification.classList.add('translate-x-full');
+        setTimeout(() => notification.remove(), 300);
+    }, 5000);
+}
+
+function playSound() {
+    const audio = document.getElementById("notif-sound");
+    if (audio) {
+        audio.currentTime = 0;
+        audio.play().catch(e => console.log("Audio play failed:", e));
+    }
+}
+
+function getCSRFToken() {
+    const cookieValue = document.cookie.split('; ')
+        .find(row => row.startsWith('csrftoken='));
+    return cookieValue ? cookieValue.split('=')[1] : '';
+}
+
+// WebSocket connection
+function connectWebSocket() {
+    const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+    socket = new WebSocket(protocol + window.location.host + "/ws/notifications/");
+    
+    socket.onopen = () => {
+        console.log("✅ Cashier WebSocket connected");
+        reconnectAttempts = 0;
+        
+        // Send heartbeat every 30 seconds
+        heartbeatInterval = setInterval(() => {
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: 'ping' }));
+            }
+        }, 30000);
+    };
+    
+    socket.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        console.log("📨 Cashier received:", data);
+        
+        if (data.type === "order_ready") {
+            console.log(`🆕 New order ready for Table ${data.table}`);
+            showNotification(`New order ready for Table ${data.table}`, 'info');
+            playSound();
+            // Reload to show new order
+            setTimeout(() => window.location.reload(), 1000);
+        } else if (data.type === "payment_approved") {
+            console.log(`✅ Payment approved for order ${data.order_id}`);
+            removeOrderCard(data.order_id);
+        }
+    };
+    
+    socket.onclose = (e) => {
+        console.warn(`🔌 WebSocket disconnected: ${e.code}`);
+        if (heartbeatInterval) clearInterval(heartbeatInterval);
+        
+        if (reconnectAttempts < maxReconnectAttempts) {
+            reconnectAttempts++;
+            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+            console.log(`Reconnecting in ${delay/1000}s...`);
+            setTimeout(connectWebSocket, delay);
+        }
+    };
+    
+    socket.onerror = (error) => {
+        console.error("WebSocket error:", error);
+    };
+}
+
+// Initialize totals on page load
+document.addEventListener('DOMContentLoaded', function() {
+    console.log("Cashier dashboard loaded");
+    connectWebSocket();
+    
+    // Initialize all totals
+    document.querySelectorAll('[id^="order-"]').forEach(orderDiv => {
+        const orderId = orderDiv.id.split('-')[1];
+        const subtotalText = document.getElementById(`subtotal-${orderId}`)?.innerText;
+        if (subtotalText) {
+            const subtotal = parseFloat(subtotalText) || 0;
+            updateTotal(orderId, subtotal);
+        }
+    });
+});
+
+// Manual refresh function
+function refreshDashboard() {
+    window.location.reload();
+}
+</script>
+
+<style>
+.hidden {
+    display: none;
+}
+</style>
+
+{% endblock %}

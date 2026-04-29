@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Login</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="flex items-center justify-center h-screen bg-gray-100">
+
+<form method="post" class="bg-white p-6 rounded shadow w-80">
+    {% csrf_token %}
+    
+    <h2 class="text-lg font-bold mb-4">Login</h2>
+
+    <input type="text" name="username" placeholder="Username"
+           class="w-full mb-3 p-2 border rounded">
+
+    <input type="password" name="password" placeholder="Password"
+           class="w-full mb-3 p-2 border rounded">
+
+    <button class="w-full bg-blue-500 text-white p-2 rounded">
+        Login
+    </button>
+</form>
+
+</body>
+</html>

@@ -1,0 +1,208 @@
+<!-- templates/dashboard/station_realtime.html -->
+{% extends "base.html" %}
+
+{% block content %}
+
+<h2 class="text-2xl font-bold mb-6 capitalize">
+    {{ station }} Station - Real-Time
+</h2>
+
+<div id="kitchen-items" class="grid grid-cols-3 gap-4">
+
+    <!-- Pending -->
+    <div>
+        <h3 class="font-semibold mb-2">Pending</h3>
+        <div id="pending-items" class="space-y-3">
+            {% for item in items %}
+                {% if item.status == 'pending' %}
+                    <div id="item-{{ item.id }}" class="bg-yellow-100 p-3 rounded shadow" data-item-id="{{ item.id }}">
+                        <p class="font-bold">Table {{ item.order.session.table.number }}</p>
+                        <p>{{ item.product.name }} x{{ item.quantity }}</p>
+                        <p class="text-sm text-gray-500">Order #{{ item.order.id }}</p>
+                        <button onclick="updateItem({{ item.id }}, 'preparing')"
+                                class="bg-blue-500 text-white px-2 py-1 mt-2 rounded hover:bg-blue-600">
+                            Start Preparing
+                        </button>
+                    </div>
+                {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Preparing -->
+    <div>
+        <h3 class="font-semibold mb-2">Preparing</h3>
+        <div id="preparing-items" class="space-y-3">
+            {% for item in items %}
+                {% if item.status == 'preparing' %}
+                    <div id="item-{{ item.id }}" class="bg-blue-100 p-3 rounded shadow" data-item-id="{{ item.id }}">
+                        <p class="font-bold">Table {{ item.order.session.table.number }}</p>
+                        <p>{{ item.product.name }} x{{ item.quantity }}</p>
+                        <p class="text-sm text-gray-500">Order #{{ item.order.id }}</p>
+                        <button onclick="updateItem({{ item.id }}, 'ready')"
+                                class="bg-green-500 text-white px-2 py-1 mt-2 rounded hover:bg-green-600">
+                            Mark Ready
+                        </button>
+                    </div>
+                {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Ready -->
+    <div>
+        <h3 class="font-semibold mb-2">Ready</h3>
+        <div id="ready-items" class="space-y-3">
+            {% for item in items %}
+                {% if item.status == 'ready' %}
+                    <div id="item-{{ item.id }}" class="bg-green-100 p-3 rounded shadow" data-item-id="{{ item.id }}">
+                        <p class="font-bold">Table {{ item.order.session.table.number }}</p>
+                        <p>{{ item.product.name }} x{{ item.quantity }}</p>
+                        <p class="text-sm text-gray-500">Order #{{ item.order.id }}</p>
+                    </div>
+                {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<audio id="notif-sound" src="https://actions.google.com/sounds/v1/alerts/beep_short.ogg"></audio>
+
+<script>
+let socket;
+let currentStation = '{{ station }}';
+
+function connectWebSocket() {
+    const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+    socket = new WebSocket(protocol + window.location.host + "/ws/notifications/");
+    
+    socket.onopen = () => {
+        console.log(`✅ ${currentStation} WebSocket connected`);
+    };
+    
+    socket.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        console.log(`📨 ${currentStation} event:`, data);
+        
+        // Play sound for new orders
+        if (data.message && data.message.includes("New order")) {
+            playSound();
+            // Add visual indicator
+            showNotificationBanner(data.message);
+        }
+        
+        // Refresh the display to show new items
+        refreshItems();
+    };
+    
+    socket.onclose = () => {
+        console.warn("🔌 WebSocket disconnected, reconnecting...");
+        setTimeout(connectWebSocket, 3000);
+    };
+    
+    socket.onerror = (error) => {
+        console.error("WebSocket error:", error);
+    };
+}
+
+// Fetch fresh items from server
+async function refreshItems() {
+    try {
+        const response = await fetch(window.location.href);
+        const html = await response.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        
+        // Update each section
+        const pendingNew = doc.querySelector("#pending-items");
+        const preparingNew = doc.querySelector("#preparing-items");
+        const readyNew = doc.querySelector("#ready-items");
+        
+        if (pendingNew) {
+            const pendingOld = document.getElementById("pending-items");
+            if (pendingOld.innerHTML !== pendingNew.innerHTML) {
+                pendingOld.innerHTML = pendingNew.innerHTML;
+            }
+        }
+        
+        if (preparingNew) {
+            const preparingOld = document.getElementById("preparing-items");
+            if (preparingOld.innerHTML !== preparingNew.innerHTML) {
+                preparingOld.innerHTML = preparingNew.innerHTML;
+            }
+        }
+        
+        if (readyNew) {
+            const readyOld = document.getElementById("ready-items");
+            if (readyOld.innerHTML !== readyNew.innerHTML) {
+                readyOld.innerHTML = readyNew.innerHTML;
+            }
+        }
+    } catch (err) {
+        console.error("Refresh failed:", err);
+    }
+}
+
+function updateItem(itemId, status) {
+    fetch(`/api/item/${itemId}/status/${status}/`, {
+        method: "POST",
+        headers: {
+            "X-CSRFToken": getCSRFToken(),
+            "Content-Type": "application/json"
+        }
+    })
+    .then(res => res.json())
+    .then(data => {
+        console.log("✅ Item updated:", data);
+        refreshItems();
+    })
+    .catch(err => console.error("❌ Update error:", err));
+}
+
+function playSound() {
+    const audio = document.getElementById("notif-sound");
+    if (audio) {
+        audio.currentTime = 0;
+        audio.play().catch(e => console.log("Audio play failed:", e));
+    }
+}
+
+function showNotificationBanner(message) {
+    // Create temporary banner
+    const banner = document.createElement('div');
+    banner.className = 'fixed top-4 right-4 bg-green-500 text-white p-4 rounded shadow-lg z-50 animate-pulse';
+    banner.innerHTML = `
+        <p class="font-bold">🔔 New Order!</p>
+        <p class="text-sm">${message}</p>
+    `;
+    document.body.appendChild(banner);
+    
+    // Remove after 5 seconds
+    setTimeout(() => banner.remove(), 5000);
+}
+
+function getCSRFToken() {
+    return document.cookie.split('; ')
+        .find(row => row.startsWith('csrftoken='))
+        ?.split('=')[1];
+}
+
+// Initialize WebSocket and start refresh interval (fallback)
+connectWebSocket();
+refreshItems();
+
+// Refresh every 10 seconds as fallback
+setInterval(refreshItems, 10000);
+</script>
+
+<style>
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+.animate-pulse {
+    animation: pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+</style>
+
+{% endblock %}

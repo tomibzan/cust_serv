@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<h2 class="text-2xl font-bold mb-6 capitalize">
+    {{ station }} Station
+</h2>
+
+<div id="kitchen-items" class="grid grid-cols-3 gap-4">
+
+    <!-- Pending -->
+    <div>
+        <h3 class="font-semibold mb-2">Pending</h3>
+
+        {% for item in items %}
+            {% if item.status == 'pending' %}
+                <div class="bg-yellow-100 p-3 mb-3 rounded shadow">
+
+                    <p class="font-bold">
+                        Table {{ item.order.session.table.number }}
+                    </p>
+
+                    <p>{{ item.product.name }} x{{ item.quantity }}</p>
+
+                    <button onclick="updateItem({{ item.id }}, 'preparing')"
+                        class="bg-blue-500 text-white px-2 py-1 mt-2 rounded">
+                        Start Preparing
+                    </button>
+
+                </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+
+    <!-- Preparing -->
+    <div>
+        <h3 class="font-semibold mb-2">Preparing</h3>
+
+        {% for item in items %}
+            {% if item.status == 'preparing' %}
+                <div class="bg-blue-100 p-3 mb-3 rounded shadow">
+
+                    <p class="font-bold">
+                        Table {{ item.order.session.table.number }}
+                    </p>
+
+                    <p>{{ item.product.name }} x{{ item.quantity }}</p>
+
+                    <button onclick="updateItem({{ item.id }}, 'ready')"
+                        class="bg-green-500 text-white px-2 py-1 mt-2 rounded">
+                        Mark Ready
+                    </button>
+
+                </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+
+    <!-- Ready -->
+    <div>
+        <h3 class="font-semibold mb-2">Ready</h3>
+
+        {% for item in items %}
+            {% if item.status == 'ready' %}
+                <div class="bg-green-100 p-3 mb-3 rounded shadow">
+
+                    <p class="font-bold">
+                        Table {{ item.order.session.table.number }}
+                    </p>
+
+                    <p>{{ item.product.name }} x{{ item.quantity }}</p>
+
+                </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+
+</div>
+
+<script>
+function updateItem(itemId, status) {
+    fetch(`/api/item/${itemId}/status/${status}/`, {
+        method: "POST",
+        headers: {
+            "X-CSRFToken": getCSRFToken()
+        }
+    })
+    .then(res => res.json())
+    .then(() => location.reload());
+}
+
+function getCSRFToken() {
+    return document.cookie.split('; ')
+        .find(row => row.startsWith('csrftoken='))
+        ?.split('=')[1];
+}
+</script>
+
+{% endblock %}

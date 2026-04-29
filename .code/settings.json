@@ -1,0 +1,8 @@
+{
+  "python.defaultInterpreterPath": "/home/akfai/code/cust_serv/venv/bin/python",
+  "djlint.pythonPath": "/home/akfai/code/cust_serv/venv/bin/python",
+  "[django-html]": {
+    "editor.defaultFormatter": "monosans.djlint",
+    "editor.formatOnSave": true
+  }
+}
