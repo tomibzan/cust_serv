@@ -1,4 +1,3 @@
-<!-- templates/customer/menu.html -->
 <!DOCTYPE html>
 <html>
 <head>
@@ -7,7 +6,6 @@
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 </head>
 <body class="bg-gray-50">
-    <!-- Header -->
     <header class="bg-blue-600 text-white sticky top-0 z-50 shadow-lg">
         <div class="container mx-auto px-4 py-3">
             <div class="flex justify-between items-center">
@@ -22,7 +20,7 @@
                     </button>
                     <button onclick="viewCart()" 
                             class="bg-green-500 px-4 py-2 rounded-lg hover:bg-green-600 transition relative">
-                        🛒 Cart 
+                        🛒 My Cart 
                         <span id="cart-count" class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 text-xs flex items-center justify-center">0</span>
                     </button>
                 </div>
@@ -31,7 +29,6 @@
     </header>
 
     <div class="container mx-auto px-4 py-6">
-        <!-- Categories Tabs -->
         <div class="flex overflow-x-auto mb-6 gap-2 pb-2">
             <button onclick="filterByStation('all')" 
                     class="station-filter px-4 py-2 bg-blue-600 text-white rounded-full whitespace-nowrap">
@@ -45,7 +42,6 @@
             {% endfor %}
         </div>
         
-        <!-- Menu Items -->
         <div id="menu-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {% for station, products in products_by_station.items %}
                 {% for product in products %}
@@ -67,9 +63,20 @@
                 {% endfor %}
             {% endfor %}
         </div>
+
+        <div class="mt-12 mb-32">
+            <h2 class="text-xl font-bold mb-4 flex items-center gap-2">
+                <span>📋 My Orders</span>
+                <span class="text-xs font-normal text-gray-500">(Auto-refreshes)</span>
+            </h2>
+            <div id="order-history" class="space-y-3">
+                <div class="text-center text-gray-500 py-8">
+                    Loading your orders...
+                </div>
+            </div>
+        </div>
         
-        <!-- Order Summary -->
-        <div id="order-summary" class="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg p-4">
+        <div id="order-summary" class="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg p-4 z-40">
             <div class="container mx-auto flex justify-between items-center">
                 <div>
                     <p class="text-sm text-gray-600">Total Items: <span id="total-items">0</span></p>
@@ -83,11 +90,10 @@
         </div>
     </div>
 
-    <!-- Cart Modal -->
     <div id="cart-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50">
         <div class="bg-white rounded-lg max-w-md mx-auto mt-20 p-6">
             <div class="flex justify-between items-center mb-4">
-                <h2 class="text-xl font-bold">Your Order</h2>
+                <h2 class="text-xl font-bold">Your Cart</h2>
                 <button onclick="closeCart()" class="text-gray-500 hover:text-gray-700">✕</button>
             </div>
             <div id="cart-items" class="max-h-96 overflow-y-auto"></div>
@@ -104,279 +110,250 @@
         </div>
     </div>
 
-    <!-- Notification Area -->
     <div id="notification-area" class="fixed top-20 right-4 z-50"></div>
-
     <audio id="notif-sound" src="https://actions.google.com/sounds/v1/alerts/beep_short.ogg"></audio>
 
     <script>
         let cart = {};
-        let socket;
+        let customerSocket;
+        let sessionId = '{{ session.id }}';
         
-        // Initialize
         $(document).ready(function() {
             loadCart();
-            connectWebSocket();
+            loadOrderHistory();
             startPolling();
+
+            if (sessionId) {
+                connectCustomerWebSocket();
+            }
+            
+            // Background refresh for safety
+            setInterval(loadOrderHistory, 10000);
         });
+
+        // --- WebSocket Integration ---
+        function connectCustomerWebSocket() {
+            const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+            customerSocket = new WebSocket(protocol + window.location.host + `/ws/customer/${sessionId}/`);
+            
+            customerSocket.onopen = () => {
+                console.log("✅ Customer WebSocket connected");
+            };
+            
+            customerSocket.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                console.log("Customer WS received:", data);
+                
+                if (data.type === "order_status_update") {
+                    showNotification(`Order #${data.order_id}: ${data.status}`, 'info');
+                    loadOrderHistory(); 
+                    playSound();
+                }
+            };
+            
+            customerSocket.onclose = () => {
+                console.log("Customer WebSocket disconnected, reconnecting...");
+                setTimeout(connectCustomerWebSocket, 5000);
+            };
+        }
+
+        // --- Order History ---
+        async function loadOrderHistory() {
+            try {
+                const response = await fetch('/customer/api/order-history/');
+                const data = await response.json();
+                
+                if (data.orders && data.orders.length > 0) {
+                    displayOrderHistory(data.orders);
+                } else {
+                    $('#order-history').html(`
+                        <div class="text-center text-gray-500 py-8 bg-white rounded-lg shadow border border-dashed">
+                            🍽️ No active orders. Start ordering from the menu!
+                        </div>
+                    `);
+                }
+            } catch (err) {
+                $('#order-history').html(`<div class="text-center text-red-500 py-8">Error loading orders.</div>`);
+            }
+        }
+
+        function displayOrderHistory(orders) {
+            const container = $('#order-history').empty();
+            const statusColors = {
+                'needs_confirmation': 'bg-yellow-100 text-yellow-800',
+                'confirmed': 'bg-blue-100 text-blue-800',
+                'preparing': 'bg-purple-100 text-purple-800',
+                'ready': 'bg-green-100 text-green-800',
+                'served': 'bg-gray-100 text-gray-800',
+                'paid': 'bg-green-100 text-green-800'
+            };
+            
+            const statusText = {
+                'needs_confirmation': '⏳ Waiting for approval',
+                'confirmed': '✅ Approved - Preparing',
+                'preparing': '🔪 Being prepared',
+                'ready': '🍽️ Ready to serve',
+                'served': '✓ Served',
+                'paid': '💰 Paid'
+            };
+            
+            orders.forEach(order => {
+                const orderCard = $(`
+                    <div class="bg-white rounded-lg shadow-md p-4 border-l-4 ${order.status === 'paid' ? 'border-green-500' : 'border-blue-500'}">
+                        <div class="flex justify-between items-start mb-3">
+                            <div>
+                                <span class="font-bold text-lg">Order #${order.id}</span>
+                                <span class="ml-3 px-2 py-1 text-xs rounded-full ${statusColors[order.status] || 'bg-gray-100 text-gray-800'}">
+                                    ${statusText[order.status] || order.status}
+                                </span>
+                            </div>
+                            <span class="text-sm text-gray-500">${new Date(order.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                        </div>
+                        <div class="space-y-1 mb-3">
+                            ${order.items.map(item => `
+                                <div class="flex justify-between text-sm">
+                                    <span>${item.quantity}x ${item.product_name}</span>
+                                    <span class="text-gray-600">${(item.price * item.quantity).toFixed(2)} ETB</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                        <div class="border-t pt-2 flex justify-between font-bold">
+                            <span>Total:</span>
+                            <span>${order.total} ETB</span>
+                        </div>
+                    </div>
+                `);
+                container.append(orderCard);
+            });
+        }
         
-        // Cart functions
+        // --- Logic & Cart ---
         function updateQuantity(productId, delta) {
             let current = cart[productId] || 0;
             let newQty = current + delta;
-            
-            if (newQty <= 0) {
-                delete cart[productId];
-            } else {
-                cart[productId] = newQty;
-            }
-            
+            if (newQty <= 0) delete cart[productId];
+            else cart[productId] = newQty;
             updateDisplay(productId);
             saveCart();
             updateTotals();
         }
         
         function updateDisplay(productId) {
-            const qty = cart[productId] || 0;
-            $(`#qty-${productId}`).text(qty);
+            $(`#qty-${productId}`).text(cart[productId] || 0);
         }
         
         function updateTotals() {
-            let totalItems = 0;
-            let totalPrice = 0;
-            
+            let totalItems = 0; let totalPrice = 0;
             for (let productId in cart) {
                 const qty = cart[productId];
                 totalItems += qty;
-                
-                // Get price from DOM
-                const priceText = $(`#qty-${productId}`).closest('.product-item').find('.text-gray-600').text();
-                const price = parseFloat(priceText) || 0;
+                const price = parseFloat($(`#qty-${productId}`).closest('.product-item').find('.text-gray-600').text()) || 0;
                 totalPrice += price * qty;
             }
-            
-            $('#total-items').text(totalItems);
-            $('#total-price').text(totalPrice.toFixed(2));
-            $('#cart-count').text(totalItems);
-            $('#cart-total').text(totalPrice.toFixed(2));
+            $('#total-items, #cart-count').text(totalItems);
+            $('#total-price, #cart-total').text(totalPrice.toFixed(2));
         }
         
-        function saveCart() {
-            localStorage.setItem('customer_cart', JSON.stringify(cart));
-        }
+        function saveCart() { localStorage.setItem('customer_cart', JSON.stringify(cart)); }
         
         function loadCart() {
             const saved = localStorage.getItem('customer_cart');
             if (saved) {
                 cart = JSON.parse(saved);
-                for (let productId in cart) {
-                    updateDisplay(parseInt(productId));
-                }
+                for (let productId in cart) updateDisplay(parseInt(productId));
                 updateTotals();
             }
         }
         
         function viewCart() {
-            const cartItems = $('#cart-items');
-            cartItems.empty();
-            
+            const cartItems = $('#cart-items').empty();
             if (Object.keys(cart).length === 0) {
                 cartItems.html('<p class="text-gray-500 text-center py-4">Your cart is empty</p>');
             } else {
                 for (let productId in cart) {
                     const qty = cart[productId];
-                    const productName = $(`#qty-${productId}`).closest('.product-item').find('h3').text();
-                    const priceText = $(`#qty-${productId}`).closest('.product-item').find('.text-gray-600').text();
-                    const price = parseFloat(priceText) || 0;
-                    
-                    cartItems.append(`
-                        <div class="flex justify-between items-center py-2 border-b">
-                            <div>
-                                <span class="font-medium">${productName}</span>
-                                <span class="text-sm text-gray-500 ml-2">x${qty}</span>
-                            </div>
-                            <div>
-                                <span>${(price * qty).toFixed(2)} ETB</span>
-                                <button onclick="updateQuantity(${productId}, -1)" class="ml-2 text-red-500">Remove</button>
-                            </div>
-                        </div>
-                    `);
+                    const name = $(`#qty-${productId}`).closest('.product-item').find('h3').text();
+                    const price = parseFloat($(`#qty-${productId}`).closest('.product-item').find('.text-gray-600').text()) || 0;
+                    cartItems.append(`<div class="flex justify-between py-2 border-b">
+                        <div><span class="font-medium">${name}</span><span class="text-sm text-gray-500 ml-2">x${qty}</span></div>
+                        <div><span>${(price * qty).toFixed(2)} ETB</span></div>
+                    </div>`);
                 }
             }
-            
             $('#cart-modal').removeClass('hidden');
         }
         
-        function closeCart() {
-            $('#cart-modal').addClass('hidden');
-        }
+        function closeCart() { $('#cart-modal').addClass('hidden'); }
         
         async function placeOrder() {
-            if (Object.keys(cart).length === 0) {
-                showNotification('Your cart is empty', 'error');
-                return;
-            }
-            
-            const items = [];
-            for (let productId in cart) {
-                items.push({
-                    product_id: parseInt(productId),
-                    quantity: cart[productId]
-                });
-            }
-            
+            if (Object.keys(cart).length === 0) return;
+            const items = Object.keys(cart).map(id => ({ product_id: parseInt(id), quantity: cart[id] }));
             try {
                 const response = await fetch('/customer/api/place-order/', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-CSRFToken': getCSRFToken()
-                    },
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCSRFToken() },
                     body: JSON.stringify({ items: items })
                 });
-                
                 const data = await response.json();
-                
                 if (data.status === 'success') {
-                    showNotification('Order placed! Waiting for waiter confirmation', 'success');
-                    cart = {};
-                    saveCart();
-                    updateTotals();
-                    closeCart();
-                    
-                    // Reset quantity displays
-                    for (let productId in cart) {
-                        updateDisplay(parseInt(productId));
-                    }
-                } else {
-                    showNotification('Failed to place order', 'error');
+                    showNotification('Order placed!', 'success');
+                    $('.product-item span[id^="qty-"]').text('0');
+                    cart = {}; saveCart(); updateTotals(); closeCart(); loadOrderHistory();
                 }
-            } catch (err) {
-                console.error('Order error:', err);
-                showNotification('Error placing order', 'error');
-            }
+            } catch (err) { showNotification('Error placing order', 'error'); }
         }
         
         async function callWaiter() {
-            const message = prompt('What do you need assistance with?', 'Service needed at table');
+            const message = prompt('Assistance needed?', 'Service needed at table');
             if (!message) return;
-            
             try {
                 const response = await fetch('/customer/api/call-waiter/', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-CSRFToken': getCSRFToken()
-                    },
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCSRFToken() },
                     body: JSON.stringify({ message: message })
                 });
-                
-                const data = await response.json();
-                
-                if (data.status === 'success') {
-                    showNotification('Waiter has been notified!', 'success');
-                    playSound();
-                } else {
-                    showNotification('Failed to notify waiter', 'error');
-                }
-            } catch (err) {
-                console.error('Call waiter error:', err);
-                showNotification('Error calling waiter', 'error');
-            }
+                if ((await response.json()).status === 'success') showNotification('Waiter notified!', 'success');
+            } catch (err) { console.error(err); }
         }
-        
+
         function filterByStation(station) {
             $('.station-filter').removeClass('bg-blue-600 text-white').addClass('bg-gray-200 text-gray-700');
             $(event.target).removeClass('bg-gray-200 text-gray-700').addClass('bg-blue-600 text-white');
-            
-            if (station === 'all') {
-                $('.product-item').show();
-            } else {
-                $('.product-item').hide();
-                $(`.product-item[data-station="${station}"]`).show();
-            }
+            if (station === 'all') $('.product-item').show();
+            else { $('.product-item').hide(); $(`.product-item[data-station="${station}"]`).show(); }
         }
         
-        // WebSocket for real-time updates
-        function connectWebSocket() {
-            const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
-            socket = new WebSocket(protocol + window.location.host + "/ws/notifications/");
-            
-            socket.onmessage = (e) => {
-                const data = JSON.parse(e.data);
-                console.log("Customer received:", data);
-                
-                if (data.type === "order_status_update") {
-                    showNotification(`Order ${data.order_id}: ${data.status}`, 'info');
-                    playSound();
-                }
-            };
-            
-            socket.onclose = () => {
-                setTimeout(connectWebSocket, 5000);
-            };
-        }
-        
-        // Poll for service request status
         function startPolling() {
             setInterval(async () => {
                 try {
                     const response = await fetch('/customer/api/service-status/');
                     const data = await response.json();
-                    
-                    if (data.has_request && data.status === 'resolved') {
-                        showNotification('A waiter has responded to your request!', 'success');
-                        playSound();
-                    }
-                } catch (err) {
-                    console.error('Polling error:', err);
-                }
+                    if (data.has_request && data.status === 'resolved') showNotification('Waiter responded!', 'success');
+                } catch (err) {}
             }, 10000);
         }
         
         function showNotification(message, type) {
-            const colors = {
-                success: 'bg-green-500',
-                error: 'bg-red-500',
-                info: 'bg-blue-500'
-            };
-            
-            const notification = $(`
-                <div class="${colors[type]} text-white px-4 py-2 rounded shadow-lg mb-2 animate-fade-in">
-                    ${message}
-                </div>
-            `);
-            
+            const colors = { success: 'bg-green-500', error: 'bg-red-500', info: 'bg-blue-500' };
+            const notification = $(`<div class="${colors[type]} text-white px-4 py-2 rounded shadow-lg mb-2 animate-fade-in">${message}</div>`);
             $('#notification-area').append(notification);
-            
-            setTimeout(() => {
-                notification.fadeOut(300, function() { $(this).remove(); });
-            }, 5000);
+            setTimeout(() => { notification.fadeOut(300, function() { $(this).remove(); }); }, 5000);
         }
         
         function playSound() {
             const audio = document.getElementById("notif-sound");
-            if (audio) {
-                audio.currentTime = 0;
-                audio.play().catch(e => console.log("Audio play failed:", e));
-            }
+            if (audio) { audio.currentTime = 0; audio.play().catch(e => {}); }
         }
         
         function getCSRFToken() {
-            return document.cookie.split('; ')
-                .find(row => row.startsWith('csrftoken='))
-                ?.split('=')[1];
+            return document.cookie.split('; ').find(row => row.startsWith('csrftoken='))?.split('=')[1];
         }
     </script>
 
     <style>
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateX(20px); }
-            to { opacity: 1; transform: translateX(0); }
-        }
-        .animate-fade-in {
-            animation: fadeIn 0.3s ease-out;
-        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+        .animate-fade-in { animation: fadeIn 0.3s ease-out; }
+        .station-filter { transition: all 0.2s; }
     </style>
 </body>
 </html>

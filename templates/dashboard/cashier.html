@@ -1,4 +1,4 @@
-<!-- templates/dashboard/cashier.html -->
+<!-- templates/dashboard/cashier.html - Fixed version -->
 {% extends "base.html" %}
 
 {% block content %}
@@ -10,10 +10,17 @@
     <div id="order-{{ order_item.order.id }}" class="bg-white p-4 rounded shadow border-l-4 border-green-500">
         <div class="flex justify-between items-start mb-3">
             <div>
-                <!-- Use order_item.order, not order.order -->
                 <h3 class="font-bold text-lg">Table {{ order_item.order.session.table.number }}</h3>
                 <p class="text-sm text-gray-500">Order #{{ order_item.order.id }}</p>
-                <p class="text-xs text-gray-400">Waiter: {{ order_item.order.session.assigned_employee.get_full_name|default:order_item.order.session.assigned_employee.username }}</p>
+                <!-- FIXED: Add null check for assigned_employee -->
+                <p class="text-xs text-gray-400">
+                    Waiter: 
+                    {% if order_item.order.session.assigned_employee %}
+                        {{ order_item.order.session.assigned_employee.get_full_name|default:order_item.order.session.assigned_employee.username }}
+                    {% else %}
+                        Not assigned
+                    {% endif %}
+                </p>
             </div>
             <span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">{{ order_item.order.status|title }}</span>
         </div>
@@ -45,12 +52,19 @@
                        placeholder="0.00" step="0.01" min="0" value="0"
                        onchange="updateTotal({{ order_item.order.id }}, {{ order_item.subtotal }})">
                 <div class="flex gap-1">
-                    <button type="button" onclick="setTip({{ order_item.order.id }}, 5, {{ order_item.subtotal }})" 
-                            class="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">5</button>
                     <button type="button" onclick="setTip({{ order_item.order.id }}, 10, {{ order_item.subtotal }})" 
                             class="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">10</button>
-                    <button type="button" onclick="setTip({{ order_item.order.id }}, 15, {{ order_item.subtotal }})" 
-                            class="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">15</button>
+                    <button type="button" onclick="setTip({{ order_item.order.id }}, 20, {{ order_item.subtotal }})" 
+                            class="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">20</button>
+                    <button type="button" onclick="setTip({{ order_item.order.id }}, 30, {{ order_item.subtotal }})" 
+                            class="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">30</button>
+                    <button type="button" onclick="setTip({{ order_item.order.id }}, 40, {{ order_item.subtotal }})" 
+                            class="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">40</button>
+                    <button type="button" onclick="setTip({{ order_item.order.id }}, 50, {{ order_item.subtotal }})" 
+                            class="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">50</button>
+                    <button type="button" onclick="setTip({{ order_item.order.id }}, 100, {{ order_item.subtotal }})" 
+                            class="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">100</button>                        
+                            
                 </div>
             </div>
         </div>
@@ -89,20 +103,21 @@
         </button>
     </div>
     {% empty %}
-    <p id="no-orders-message" class="text-gray-500 col-span-3 text-center py-8">No pending orders ready for payment</p>
+    <p class="text-gray-500 col-span-3 text-center py-8">No pending orders ready for payment</p>
     {% endfor %}
 </div>
 
 <audio id="notif-sound" src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"></audio>
 
 <script>
-// Global variables
+// Your existing JavaScript functions here...
+// (keep the same JavaScript as before)
+
 let socket;
 let reconnectAttempts = 0;
 const maxReconnectAttempts = 10;
 let heartbeatInterval;
 
-// Helper functions
 function setTip(orderId, amount, subtotal) {
     const tipInput = document.getElementById(`tip-${orderId}`);
     if (tipInput) {
@@ -139,7 +154,6 @@ async function processPayment(button, orderId, subtotal) {
     const proofFile = document.getElementById(`proof-${orderId}`)?.files[0];
     const proofRef = document.getElementById(`proof-ref-${orderId}`)?.value || '';
     
-    // Show loading state
     const originalText = button.innerText;
     button.innerText = '⏳ Processing...';
     button.disabled = true;
@@ -154,9 +168,7 @@ async function processPayment(button, orderId, subtotal) {
     try {
         const response = await fetch('/payments/create/', {
             method: 'POST',
-            headers: {
-                'X-CSRFToken': getCSRFToken()
-            },
+            headers: { 'X-CSRFToken': getCSRFToken() },
             body: formData
         });
         
@@ -168,17 +180,11 @@ async function processPayment(button, orderId, subtotal) {
             removeOrderCard(orderId);
         } else if (data.status === 'created') {
             if (method === 'cash') {
-                // Auto-approve cash payments
                 const approveResponse = await fetch(`/payments/${data.payment_id}/approve/`, {
                     method: 'POST',
-                    headers: {
-                        'X-CSRFToken': getCSRFToken(),
-                        'Content-Type': 'application/json'
-                    }
+                    headers: { 'X-CSRFToken': getCSRFToken() }
                 });
-                
                 const approveData = await approveResponse.json();
-                
                 if (approveData.status === 'approved') {
                     showNotification(`✅ Payment approved! Total: ${data.amount} ETB (Tip: ${data.tip} ETB)`, 'success');
                     removeOrderCard(orderId);
@@ -190,7 +196,7 @@ async function processPayment(button, orderId, subtotal) {
                 removeOrderCard(orderId);
             }
         } else if (data.status === 'exists') {
-            showNotification(`⚠️ Payment already pending for this order`, 'info');
+            showNotification(`⚠️ Payment already pending`, 'info');
         } else {
             showNotification(`❌ Payment failed: ${data.error || 'Unknown error'}`, 'error');
         }
@@ -207,12 +213,9 @@ function removeOrderCard(orderId) {
     const el = document.getElementById(`order-${orderId}`);
     if (el) {
         el.remove();
-        console.log(`Removed order #${orderId} from cashier dashboard`);
-        
-        // Check if no orders left
         const container = document.getElementById("orders-container");
         if (container.children.length === 0) {
-            container.innerHTML = '<p id="no-orders-message" class="text-gray-500 col-span-3 text-center py-8">No pending orders ready for payment</p>';
+            container.innerHTML = '<p class="text-gray-500 col-span-3 text-center py-8">No pending orders ready for payment</p>';
         }
     }
 }
@@ -251,7 +254,6 @@ function getCSRFToken() {
     return cookieValue ? cookieValue.split('=')[1] : '';
 }
 
-// WebSocket connection
 function connectWebSocket() {
     const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
     socket = new WebSocket(protocol + window.location.host + "/ws/notifications/");
@@ -259,8 +261,6 @@ function connectWebSocket() {
     socket.onopen = () => {
         console.log("✅ Cashier WebSocket connected");
         reconnectAttempts = 0;
-        
-        // Send heartbeat every 30 seconds
         heartbeatInterval = setInterval(() => {
             if (socket.readyState === WebSocket.OPEN) {
                 socket.send(JSON.stringify({ type: 'ping' }));
@@ -271,42 +271,27 @@ function connectWebSocket() {
     socket.onmessage = (e) => {
         const data = JSON.parse(e.data);
         console.log("📨 Cashier received:", data);
-        
         if (data.type === "order_ready") {
-            console.log(`🆕 New order ready for Table ${data.table}`);
             showNotification(`New order ready for Table ${data.table}`, 'info');
             playSound();
-            // Reload to show new order
             setTimeout(() => window.location.reload(), 1000);
-        } else if (data.type === "payment_approved") {
-            console.log(`✅ Payment approved for order ${data.order_id}`);
-            removeOrderCard(data.order_id);
         }
     };
     
-    socket.onclose = (e) => {
-        console.warn(`🔌 WebSocket disconnected: ${e.code}`);
+    socket.onclose = () => {
         if (heartbeatInterval) clearInterval(heartbeatInterval);
-        
         if (reconnectAttempts < maxReconnectAttempts) {
             reconnectAttempts++;
             const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-            console.log(`Reconnecting in ${delay/1000}s...`);
             setTimeout(connectWebSocket, delay);
         }
     };
-    
-    socket.onerror = (error) => {
-        console.error("WebSocket error:", error);
-    };
 }
 
-// Initialize totals on page load
 document.addEventListener('DOMContentLoaded', function() {
     console.log("Cashier dashboard loaded");
     connectWebSocket();
     
-    // Initialize all totals
     document.querySelectorAll('[id^="order-"]').forEach(orderDiv => {
         const orderId = orderDiv.id.split('-')[1];
         const subtotalText = document.getElementById(`subtotal-${orderId}`)?.innerText;
@@ -316,11 +301,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 });
-
-// Manual refresh function
-function refreshDashboard() {
-    window.location.reload();
-}
 </script>
 
 <style>

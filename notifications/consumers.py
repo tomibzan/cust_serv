@@ -171,6 +171,35 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             'timestamp': str(event.get('timestamp', ''))
         }))
 
+    # notifications/consumers.py - Add CustomerConsumer
+
+class CustomerConsumer(AsyncWebsocketConsumer):
+    """WebSocket consumer for customer UI"""
+    
+    async def connect(self):
+        # Get session info from scope
+        session_id = self.scope['url_route']['kwargs'].get('session_id')
+        
+        if not session_id:
+            await self.close()
+            return
+        
+        self.session_id = session_id
+        self.group_name = f"session_{session_id}"
+        
+        # Join session group
+        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        await self.accept()
+        print(f"✅ Customer WebSocket connected for session {session_id}")
+    
+    async def disconnect(self, close_code):
+        await self.channel_layer.group_discard(self.group_name, self.channel_name)
+        print(f"❌ Customer WS disconnected for session {self.session_id}")
+    
+    async def send_notification(self, event):
+        """Send notification to customer"""
+        await self.send(text_data=json.dumps(event.get("data", {})))    
+
     @database_sync_to_async
     def mark_notification_read(self, notification_id):
         """Mark a notification as read in the database"""

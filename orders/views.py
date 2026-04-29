@@ -8,7 +8,7 @@ from django.utils import timezone
 from django.shortcuts import redirect, get_object_or_404, render
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-from orders.models import OrderItem, Order
+from orders.models import TableSession, OrderItem, Order, ServiceRequest 
 from products.models import Product, ProductSource
 from notifications.models import Notification
 from .models import ServiceRequest, Order, KitchenLog, TableSession
@@ -298,6 +298,73 @@ def update_order_status(request, order_id, status):
     # 👉 handled in update_item_status ONLY
 
     return redirect('kitchen_dashboard')
+
+
+@login_required
+@csrf_exempt
+def confirm_customer_order(request, order_id):
+    """Waiter confirms a customer order"""
+    order = get_object_or_404(Order, id=order_id, status='needs_confirmation')
+    
+    # Verify waiter is assigned to this table
+    if order.session.assigned_employee != request.user:
+        return JsonResponse({'error': 'Not authorized'}, status=403)
+    
+    with transaction.atomic():
+        # Update order status
+        order.status = 'confirmed'
+        order.save()
+        
+        # Send each item to production stations
+        channel_layer = get_channel_layer()
+        
+        for item in order.items.all():
+            station_type = item.product_source.station_type if item.product_source else 'kitchen'
+            async_to_sync(channel_layer.group_send)(
+                f"station_{station_type}",
+                {
+                    "type": "send_notification",
+                    "data": {
+                        "type": "new_order",
+                        "order_id": order.id,
+                        "item_id": item.id,
+                        "product": item.product.name,
+                        "quantity": item.quantity,
+                        "table": order.session.table.number,
+                        "message": f"🛒 Customer order from Table {order.session.table.number} - {item.product.name} x{item.quantity}"
+                    }
+                }
+            )
+        
+        # Notify customer via WebSocket (if connected)
+        # Could implement customer WebSocket for real-time updates
+        
+        # Create notification for kitchen (already handled by station groups)
+        
+        return JsonResponse({'status': 'confirmed', 'order_id': order.id})
+
+
+@login_required
+@csrf_exempt
+def reject_customer_order(request, order_id):
+    """Waiter rejects a customer order"""
+    order = get_object_or_404(Order, id=order_id, status='needs_confirmation')
+    
+    if order.session.assigned_employee != request.user:
+        return JsonResponse({'error': 'Not authorized'}, status=403)
+    
+    order.status = 'cancelled'
+    order.save()
+    
+    # Notify customer (notification stored, will be shown on next page load)
+    Notification.objects.create(
+        user=None,  # Customer doesn't have user account
+        type='order_cancelled',
+        message=f"Your order #{order.id} was cancelled. Please contact your waiter.",
+        reference_id=order.id
+    )
+    
+    return JsonResponse({'status': 'rejected', 'order_id': order.id})
 
 
 @login_required

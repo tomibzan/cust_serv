@@ -8,7 +8,9 @@ from .views import (
     update_order_status,
     mark_order_served,
     call_waiter,
-    update_item_status, mark_order_paid, cashier_dashboard
+    update_item_status, mark_order_paid, cashier_dashboard,
+    confirm_customer_order,
+    reject_customer_order
 )
 
 urlpatterns = [
@@ -26,4 +28,6 @@ urlpatterns = [
     path('cashier/', cashier_dashboard, name='cashier_dashboard'),
     path('cashier/pay/<int:order_id>/', mark_order_paid, name='mark_order_paid'),
     path('api/order/<int:order_id>/pay/', mark_order_paid, name='mark_order_paid'),
+    path('waiter/confirm-order/<int:order_id>/', confirm_customer_order, name='confirm_order'),
+    path('waiter/reject-order/<int:order_id>/', reject_customer_order, name='reject_order'),
 ]

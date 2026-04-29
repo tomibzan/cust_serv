@@ -20,11 +20,45 @@
     {% endfor %}
 </div>
 
+<div id="confirmation-wrapper">
+    {% if pending_confirmation %}
+    <h2 class="text-xl font-bold mb-4 mt-6">⏳ Orders Awaiting Confirmation</h2>
+    <div id="confirmation-section" class="space-y-3 mb-6">
+        {% for order in pending_confirmation %}
+        <div id="confirm-order-{{ order.id }}" class="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded shadow">
+            <div class="flex justify-between items-start">
+                <div>
+                    <p class="font-bold">Table {{ order.session.table.number }}</p>
+                    <p class="text-sm text-gray-600">Order #{{ order.id }} - Customer Order</p>
+                    <div class="mt-2">
+                        {% for item in order.items.all %}
+                        <p class="text-sm">{{ item.product.name }} x{{ item.quantity }}</p>
+                        {% endfor %}
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2">{{ order.created_at|timesince }} ago</p>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="confirmOrder({{ order.id }})" 
+                            class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 transition">
+                        ✓ Confirm
+                    </button>
+                    <button onclick="rejectOrder({{ order.id }})" 
+                            class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 transition">
+                        ✗ Reject
+                    </button>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+
 <h2 class="text-xl font-bold mb-4">Live Notifications</h2>
 
 <div id="notifications" class="space-y-3">
     {% for notif in notifications %}
-        <div id="notif-{{ notif.id }}" data-order="{{ notif.order.id }}">
+        <div id="notif-{{ notif.id }}" 
              data-order="{{ notif.order.id|default:'' }}"
              class="bg-yellow-100 p-4 rounded shadow flex justify-between items-center">
 
@@ -94,7 +128,6 @@
 
 <audio id="notif-sound" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg"></audio>
 
-<!-- 🔄 PARTIAL REFRESH (SAFE) -->
 <script>
 setInterval(() => {
     fetch(window.location.href)
@@ -103,7 +136,8 @@ setInterval(() => {
             const parser = new DOMParser();
             const doc = parser.parseFromString(html, 'text/html');
 
-            ["tables-section", "requests-section", "orders-section"].forEach(id => {
+            // Added "confirmation-wrapper" to the refresh list
+            ["tables-section", "requests-section", "orders-section", "confirmation-wrapper"].forEach(id => {
                 const newEl = doc.querySelector("#" + id);
                 const curEl = document.querySelector("#" + id);
 
@@ -115,99 +149,102 @@ setInterval(() => {
 }, 15000);
 </script>
 
-<!-- 🔔 WEBSOCKET -->
 <script>
-function connectSocket() {
-    const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
-    const socket = new WebSocket(protocol + window.location.host + "/ws/notifications/");
-
-    socket.onopen = () => console.log("✅ WebSocket connected");
-
-    socket.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-
-    console.log("📨 WS EVENT:", data);
-
-    // 💰 PAYMENT EVENT
-    if (data.type === "payment_done") {
-        console.log("💰 Payment done:", data.order_id);
-
-        document.querySelectorAll(`[data-order="${data.order_id}"]`)
-            .forEach(el => el.remove());
-
-        return;
-    }
-
-    // 🔔 READY / NORMAL NOTIFICATION
-    if (data.type === "order_ready" || !data.type) {
-        renderNotification(data);
-        playSound();
-        highlightTableFromMessage(data.message);
-    }
-};
-
-    socket.onclose = () => {
-        console.warn("🔌 Reconnecting...");
-        setTimeout(connectSocket, 3000);
-    };
+// Order Confirmation Actions
+function confirmOrder(orderId) {
+    fetch(`/waiter/confirm-order/${orderId}/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': getCSRFToken(),
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'confirmed') {
+            document.getElementById(`confirm-order-${orderId}`)?.remove();
+            // Optional: You could call a function to refresh the orders-section immediately
+        }
+    });
 }
 
-connectSocket();
-</script>
-
-<!-- ✅ RENDER NOTIFICATION -->
-<script>
-function renderNotification(data) {
-
-    const id = data.id || Date.now();
-
-    if (document.getElementById("notif-" + id)) return;
-
-    const container = document.getElementById("notifications");
-
-    const el = document.createElement("div");
-    el.id = "notif-" + id;
-
-    // 🔥 IMPORTANT: attach order reference
-    if (data.order_id) {
-        el.setAttribute("data-order", data.order_id);
+function rejectOrder(orderId) {
+    if (confirm('Reject this order? The customer will be notified.')) {
+        fetch(`/waiter/reject-order/${orderId}/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCSRFToken(),
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'rejected') {
+                document.getElementById(`confirm-order-${orderId}`)?.remove();
+            }
+        });
     }
-
-    el.className = "bg-yellow-100 p-4 rounded shadow flex justify-between items-center";
-
-    el.innerHTML = `
-        <div>
-            <p class="font-semibold">${data.message}</p>
-        </div>
-        <button onclick="acknowledge(${id})"
-            class="bg-green-500 text-white px-3 py-1 rounded">
-            Noted
-        </button>
-    `;
-
-    container.prepend(el);
 }
 
-</script>
-
-<!-- ✅ ACK -->
-<script>
 function acknowledge(id) {
     fetch(`/api/notifications/${id}/read/`, {
         method: "PATCH",
-        headers: {
-            "X-CSRFToken": getCSRFToken()
-        }
+        headers: { "X-CSRFToken": getCSRFToken() }
     })
     .then(() => {
         const el = document.getElementById("notif-" + id);
         if (el) el.remove();
     });
 }
-</script>
 
-<!-- 🔊 SOUND -->
-<script>
+function renderNotification(data) {
+    const id = data.id || Date.now();
+    if (document.getElementById("notif-" + id)) return;
+    const container = document.getElementById("notifications");
+    const el = document.createElement("div");
+    el.id = "notif-" + id;
+    if (data.order_id) el.setAttribute("data-order", data.order_id);
+    el.className = "bg-yellow-100 p-4 rounded shadow flex justify-between items-center";
+    el.innerHTML = `
+        <div><p class="font-semibold">${data.message}</p></div>
+        <button onclick="acknowledge(${id})" class="bg-green-500 text-white px-3 py-1 rounded">Noted</button>
+    `;
+    container.prepend(el);
+}
+
+function connectSocket() {
+    const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+    const socket = new WebSocket(protocol + window.location.host + "/ws/notifications/");
+
+    socket.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        if (data.type === "payment_done") {
+            document.querySelectorAll(`[data-order="${data.order_id}"]`).forEach(el => el.remove());
+            return;
+        }
+        if (data.type === "order_ready" || !data.type) {
+            renderNotification(data);
+            playSound();
+            highlightTableFromMessage(data.message);
+        }
+        // If a new customer order is placed, trigger a refresh of the confirmation section
+        if (data.type === "new_customer_order") {
+            playSound();
+        }
+    };
+
+    socket.onclose = () => setTimeout(connectSocket, 3000);
+}
+
+function highlightTableFromMessage(message) {
+    const match = message.match(/Table (\d+)/);
+    if (!match) return;
+    const el = document.querySelector(`[data-table="${match[1]}"]`);
+    if (!el) return;
+    el.classList.add("ring-4", "ring-green-500");
+    setTimeout(() => el.classList.remove("ring-4", "ring-green-500"), 8000);
+}
+
 function playSound() {
     const audio = document.getElementById("notif-sound");
     if (audio) {
@@ -215,31 +252,12 @@ function playSound() {
         audio.play().catch(() => {});
     }
 }
-</script>
 
-<!-- ✨ TABLE HIGHLIGHT -->
-<script>
-function highlightTableFromMessage(message) {
-    const match = message.match(/Table (\d+)/);
-    if (!match) return;
-
-    const el = document.querySelector(`[data-table="${match[1]}"]`);
-    if (!el) return;
-
-    el.classList.add("ring-4", "ring-green-500");
-
-    setTimeout(() => {
-        el.classList.remove("ring-4", "ring-green-500");
-    }, 8000);
-}
-</script>
-
-<script>
 function getCSRFToken() {
-    return document.cookie.split('; ')
-        .find(row => row.startsWith('csrftoken='))
-        ?.split('=')[1];
+    return document.cookie.split('; ').find(row => row.startsWith('csrftoken='))?.split('=')[1];
 }
+
+connectSocket();
 </script>
 
 {% endblock %}
