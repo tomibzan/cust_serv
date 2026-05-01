@@ -1,4 +1,5 @@
-# customer/views.py - Fix the import
+# customer/views.py - Complete file
+
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.utils import timezone
@@ -7,9 +8,17 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from django.db import transaction
+from datetime import date
 import json
+import logging
 
-from orders.models import TableSession, Table, Order, OrderItem, ServiceRequest  # ← Import ServiceRequest from orders
+logger = logging.getLogger(__name__)
+
+from orders.models import (
+    TableSession, Table, Order, OrderItem, ServiceRequest, 
+    ActiveTableSession, WorkShift, TableAssignment
+)
 from products.models import Product
 from users.models import Client
 from notifications.models import Notification
@@ -31,21 +40,43 @@ def customer_login(request):
             # Get the table
             table = get_object_or_404(Table, number=table_number, is_active=True)
             
-            # Find or create active session for this table
-            session, session_created = TableSession.objects.get_or_create(
+            # Find the active session for this table
+            active_session = ActiveTableSession.objects.filter(
                 table=table,
-                is_active=True,
-                defaults={
-                    'assigned_employee': None,  # Will be assigned by admin/waiter
-                    'client': client,
-                    'is_client_identified': True
-                }
-            )
+                is_active=True
+            ).first()
+            
+            if not active_session:
+                # Try to find from today's shift
+                today = date.today()
+                shift = WorkShift.objects.filter(
+                    shift_date=today,
+                    is_active=True,
+                    table_assignments__table=table
+                ).first()
+                
+                if shift:
+                    active_session = ActiveTableSession.objects.create(
+                        table=table,
+                        waiter=shift.employee,
+                        client=client,
+                        is_client_identified=True,
+                        is_active=True
+                    )
+                else:
+                    messages.error(request, f'No active session for Table {table_number}. Please contact staff.')
+                    return render(request, 'customer/login.html')
+            
+            # Ensure the session has the client linked
+            if not active_session.client:
+                active_session.client = client
+                active_session.is_client_identified = True
+                active_session.save()
             
             # Store in session
             request.session['customer_phone'] = phone
             request.session['table_number'] = table_number
-            request.session['session_id'] = session.id
+            request.session['session_id'] = active_session.id
             
             return redirect('customer_menu')
             
@@ -74,16 +105,12 @@ def customer_menu(request):
         products_by_station[station].append(product)
     
     # Get active session
-    session = get_object_or_404(TableSession, id=session_id, is_active=True)
-    
-    # Get existing orders for this session
-    orders = Order.objects.filter(session=session).exclude(status='paid')
+    session = get_object_or_404(ActiveTableSession, id=session_id, is_active=True)
     
     context = {
         'products_by_station': products_by_station,
         'table_number': table_number,
         'session': session,
-        'orders': orders,
     }
     
     return render(request, 'customer/menu.html', context)
@@ -101,60 +128,63 @@ def customer_call_waiter(request):
         session_id = request.session.get('session_id')
         message = data.get('message', 'Customer needs assistance')
         
-        session = get_object_or_404(TableSession, id=session_id)
+        session = get_object_or_404(ActiveTableSession, id=session_id, is_active=True)
+        waiter = session.waiter
+        
+        if not waiter:
+            return JsonResponse({'error': 'No waiter assigned to this table'}, status=400)
         
         # Create service request
         service_request = ServiceRequest.objects.create(
-            session=session,
+            active_session=session,
             table=session.table,
             source='client',
-            assigned_employee=session.assigned_employee,
+            assigned_employee=waiter,
             message=message,
             status='pending'
         )
         
         # Notify waiter via WebSocket
-        if session.assigned_employee:
-            channel_layer = get_channel_layer()
-            async_to_sync(channel_layer.group_send)(
-                f"user_{session.assigned_employee.id}",
-                {
-                    "type": "send_notification",
-                    "data": {
-                        "type": "service_request",
-                        "service_request_id": service_request.id,
-                        "table": session.table.number,
-                        "message": message,
-                        "timestamp": str(timezone.now())
-                    }
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f"user_{waiter.id}",
+            {
+                "type": "send_notification",
+                "data": {
+                    "type": "service_request",
+                    "service_request_id": service_request.id,
+                    "table": session.table.number,
+                    "message": message,
+                    "timestamp": str(timezone.now())
                 }
-            )
-            
-            # Create notification in database
-            Notification.objects.create(
-                user=session.assigned_employee,
-                type='service_request',
-                message=f"📞 Table {session.table.number} needs assistance: {message[:50]}",
-                reference_id=service_request.id,
-                is_read=False
-            )
+            }
+        )
+        
+        # Create notification in database
+        Notification.objects.create(
+            user=waiter,
+            type='service_request',
+            message=f"📞 Table {session.table.number} needs assistance: {message[:50]}",
+            reference_id=service_request.id,
+            is_read=False
+        )
         
         return JsonResponse({
             'status': 'success',
             'request_id': service_request.id,
-            'message': 'Waiter has been notified'
+            'message': f'Waiter {waiter.username} has been notified'
         })
         
     except Exception as e:
+        logger.error(f"Error in customer_call_waiter: {str(e)}")
         return JsonResponse({'error': str(e)}, status=500)
 
-
-# customer/views.py - Update customer_place_order function
 
 @csrf_exempt
 @require_http_methods(["POST"])
 def customer_place_order(request):
-    """Customer places an order directly - with trusted client bypass"""
+    """Customer places an order - requires waiter approval first"""
+    
     if not request.session.get('customer_phone'):
         return JsonResponse({'error': 'Not logged in'}, status=401)
     
@@ -163,109 +193,124 @@ def customer_place_order(request):
         session_id = request.session.get('session_id')
         items = data.get('items', [])
         
-        session = get_object_or_404(TableSession, id=session_id)
+        if not items:
+            return JsonResponse({'error': 'No items in order'}, status=400)
+        
+        # Get session
+        session = get_object_or_404(ActiveTableSession, id=session_id, is_active=True)
+        waiter = session.waiter
+        
+        if not waiter:
+            return JsonResponse({'error': 'No waiter assigned to this table'}, status=400)
         
         # Check if client is trusted
         is_trusted_client = session.client and session.client.is_validated
         
-        # Determine initial order status
-        # Trusted clients bypass waiter approval, go directly to 'confirmed'
-        initial_status = 'confirmed' if is_trusted_client else 'needs_confirmation'
-        
-        # Create order
-        order = Order.objects.create(
-            session=session,
-            source='client',
-            status=initial_status,
-            is_trusted=is_trusted_client,  # Mark if trusted
-            created_by=None
-        )
-        
-        # Add items to order
-        for item_data in items:
-            product = get_object_or_404(Product, id=item_data['product_id'])
-            quantity = int(item_data['quantity'])
-            
-            OrderItem.objects.create(
-                order=order,
-                product=product,
-                quantity=quantity,
-                price_at_time=product.price,
-                status='pending' if not is_trusted_client else 'pending',
-                product_source=product.product_source
+        # Create order with transaction
+        with transaction.atomic():
+            order = Order.objects.create(
+                active_session=session,
+                source='client',
+                status='needs_confirmation' if not is_trusted_client else 'confirmed',
+                is_trusted=is_trusted_client,
+                created_by=None
             )
-        
-        channel_layer = get_channel_layer()
-        
-        # If trusted client, immediately send to production stations
-        if is_trusted_client:
-            # Send each item to its respective station
-            for item in order.items.all():
-                station_type = item.product_source.station_type if item.product_source else 'kitchen'
-                async_to_sync(channel_layer.group_send)(
-                    f"station_{station_type}",
-                    {
-                        "type": "send_notification",
-                        "data": {
-                            "type": "new_order",
-                            "order_id": order.id,
-                            "item_id": item.id,
-                            "product": item.product.name,
-                            "quantity": item.quantity,
-                            "table": session.table.number,
-                            "message": f"🛒 TRUSTED CLIENT: Order from Table {session.table.number} - {item.product.name} x{item.quantity}"
-                        }
-                    }
-                )
             
-            # Update order status to preparing
-            order.status = 'preparing'
-            order.save()
-        
-        # Notify waiter about the order
-        if session.assigned_employee:
+            # Add items to order
+            order_items_created = []
+            for item_data in items:
+                product_id = item_data.get('product_id')
+                quantity = int(item_data.get('quantity', 0))
+                
+                if quantity <= 0:
+                    continue
+                    
+                product = get_object_or_404(Product, id=product_id)
+                
+                item_status = 'pending_approval' if not is_trusted_client else 'pending'
+                
+                order_item = OrderItem.objects.create(
+                    order=order,
+                    product=product,
+                    quantity=quantity,
+                    price_at_time=product.price,
+                    status=item_status,
+                    product_source=product.product_source
+                )
+                order_items_created.append(order_item)
+            
+            if not order_items_created:
+                order.delete()
+                return JsonResponse({'error': 'No valid items in order'}, status=400)
+            
+            channel_layer = get_channel_layer()
+            
+            # If trusted client, immediately send to production stations
+            if is_trusted_client:
+                for item in order_items_created:
+                    station_type = item.product_source.station_type if item.product_source else 'kitchen'
+                    async_to_sync(channel_layer.group_send)(
+                        f"station_{station_type}",
+                        {
+                            "type": "send_notification",
+                            "data": {
+                                "type": "new_order",
+                                "order_id": order.id,
+                                "item_id": item.id,
+                                "product": item.product.name,
+                                "quantity": item.quantity,
+                                "table": session.table.number,
+                                "message": f"🛒 TRUSTED: Table {session.table.number} - {item.product.name} x{item.quantity}"
+                            }
+                        }
+                    )
+            
+            # Notify waiter
             notification_message = (
-                f"🛒 Trusted client order from Table {session.table.number} - Sent to kitchen"
+                f"🛒 TRUSTED: Order from Table {session.table.number} sent to kitchen"
                 if is_trusted_client
-                else f"🛒 New customer order from Table {session.table.number} needs confirmation"
+                else f"🛒 NEW: Order from Table {session.table.number} needs approval"
             )
             
             async_to_sync(channel_layer.group_send)(
-                f"user_{session.assigned_employee.id}",
+                f"user_{waiter.id}",
                 {
                     "type": "send_notification",
                     "data": {
                         "type": "customer_order",
                         "order_id": order.id,
                         "table": session.table.number,
-                        "items_count": len(items),
-                        "is_trusted": is_trusted_client,
+                        "items_count": len(order_items_created),
+                        "needs_approval": not is_trusted_client,
                         "message": notification_message
                     }
                 }
             )
             
             Notification.objects.create(
-                user=session.assigned_employee,
+                user=waiter,
                 type='order_ready',
                 order=order,
                 message=notification_message,
                 is_read=False
             )
-        
-        return JsonResponse({
-            'status': 'success',
-            'order_id': order.id,
-            'is_trusted': is_trusted_client,
-            'message': (
-                'Order placed! Sent directly to kitchen.'
-                if is_trusted_client
-                else 'Order placed! Waiting for waiter confirmation.'
-            )
-        })
-        
+            
+            return JsonResponse({
+                'status': 'success',
+                'order_id': order.id,
+                'is_trusted': is_trusted_client,
+                'items_count': len(order_items_created),
+                'message': (
+                    'Order placed! Sent directly to kitchen.'
+                    if is_trusted_client
+                    else 'Order placed! Waiting for waiter approval.'
+                )
+            })
+            
     except Exception as e:
+        logger.error(f"Error in customer_place_order: {str(e)}")
         return JsonResponse({'error': str(e)}, status=500)
+
 
 def get_menu_items(request):
     """API endpoint to get menu items"""
@@ -297,9 +342,8 @@ def get_service_request_status(request):
     
     session_id = request.session.get('session_id')
     
-    # Get latest service request
     latest_request = ServiceRequest.objects.filter(
-        session_id=session_id
+        active_session_id=session_id
     ).order_by('-created_at').first()
     
     if latest_request:
@@ -313,7 +357,6 @@ def get_service_request_status(request):
     
     return JsonResponse({'has_request': False})
 
-# customer/views.py - Add order history endpoint
 
 def get_order_history(request):
     """Get order history for current customer session"""
@@ -322,30 +365,12 @@ def get_order_history(request):
     
     session_id = request.session.get('session_id')
     
-    # Get all orders for this session that are not paid
-    # Include paid orders from last 24 hours for reference
-    from django.utils import timezone
-    from datetime import timedelta
-    
-    yesterday = timezone.now() - timedelta(days=1)
-    
     orders = Order.objects.filter(
-        session_id=session_id
-    ).exclude(
-        status='paid'
+        active_session_id=session_id
     ).order_by('-created_at')
-    
-    # Also include recent paid orders (last 24 hours)
-    recent_paid = Order.objects.filter(
-        session_id=session_id,
-        status='paid',
-        created_at__gte=yesterday
-    ).order_by('-created_at')
-    
-    all_orders = list(orders) + list(recent_paid)
     
     order_data = []
-    for order in all_orders:
+    for order in orders:
         items = []
         total = 0
         
@@ -358,9 +383,19 @@ def get_order_history(request):
                 'price': float(item.price_at_time)
             })
         
+        status_display = {
+            'needs_confirmation': 'Waiting for waiter approval',
+            'confirmed': 'Order confirmed - Being prepared',
+            'preparing': 'Kitchen is preparing your order',
+            'ready': 'Ready to serve!',
+            'served': 'Served',
+            'paid': 'Paid - Thank you!'
+        }
+        
         order_data.append({
             'id': order.id,
-            'status': order.status,
+            'status': status_display.get(order.status, order.status),
+            'status_code': order.status,
             'created_at': order.created_at.isoformat(),
             'items': items,
             'total': round(total, 2)

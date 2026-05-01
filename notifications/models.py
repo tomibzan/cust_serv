@@ -13,7 +13,9 @@ class Notification(models.Model):
     user = models.ForeignKey(
         'users.User',
         on_delete=models.CASCADE,
-        related_name='notifications'
+        related_name='notifications',
+        null=True, 
+        blank=True  
     )
 
     type = models.CharField(max_length=50, choices=TYPE_CHOICES)

@@ -9,7 +9,6 @@
         <div class="bg-white p-4 rounded shadow" data-table="{{ session.table.number }}">
             <p class="font-semibold">Table {{ session.table.number }}</p>
             <p class="text-sm text-gray-500">Session {{ session.id }}</p>
-
             <a href="{% url 'create_order' session.id %}"
                class="bg-indigo-500 text-white px-3 py-1 rounded mt-2 inline-block hover:bg-indigo-600 transition">
                Create Order
@@ -20,15 +19,27 @@
     {% endfor %}
 </div>
 
+<!-- ============================================ -->
+<!-- ORDERS AWAITING APPROVAL SECTION -->
+<!-- ============================================ -->
 <div id="confirmation-wrapper">
     {% if pending_confirmation %}
-    <h2 class="text-xl font-bold mb-4 mt-6">⏳ Orders Awaiting Confirmation</h2>
+    <h2 class="text-xl font-bold mb-4 mt-6 bg-yellow-100 p-2 rounded">⏳ Orders Awaiting Your Approval</h2>
     <div id="confirmation-section" class="space-y-3 mb-6">
         {% for order in pending_confirmation %}
         <div id="confirm-order-{{ order.id }}" class="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded shadow">
             <div class="flex justify-between items-start">
                 <div>
-                    <p class="font-bold">Table {{ order.session.table.number }}</p>
+                    <p class="font-bold text-lg">
+                        Table 
+                        {% if order.active_session %}
+                            {{ order.active_session.table.number }}
+                        {% elif order.session %}
+                            {{ order.session.table.number }}
+                        {% else %}
+                            ?
+                        {% endif %}
+                    </p>
                     <p class="text-sm text-gray-600">Order #{{ order.id }} - Customer Order</p>
                     <div class="mt-2">
                         {% for item in order.items.all %}
@@ -39,11 +50,11 @@
                 </div>
                 <div class="flex gap-2">
                     <button onclick="confirmOrder({{ order.id }})" 
-                            class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 transition">
-                        ✓ Confirm
+                            class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition font-semibold">
+                        ✓ Approve Order
                     </button>
                     <button onclick="rejectOrder({{ order.id }})" 
-                            class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 transition">
+                            class="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition">
                         ✗ Reject
                     </button>
                 </div>
@@ -54,23 +65,20 @@
     {% endif %}
 </div>
 
+<!-- ============================================ -->
+<!-- LIVE NOTIFICATIONS -->
+<!-- ============================================ -->
 <h2 class="text-xl font-bold mb-4">Live Notifications</h2>
-
 <div id="notifications" class="space-y-3">
     {% for notif in notifications %}
-        <div id="notif-{{ notif.id }}" 
-             data-order="{{ notif.order.id|default:'' }}"
+        <div id="notif-{{ notif.id }}" data-order="{{ notif.order.id|default:'' }}"
              class="bg-yellow-100 p-4 rounded shadow flex justify-between items-center">
-
             <div>
                 <p class="font-semibold">{{ notif.message }}</p>
-                <p class="text-xs text-gray-500">
-                    {{ notif.created_at|timesince }} ago
-                </p>
+                <p class="text-xs text-gray-500">{{ notif.created_at|timesince }} ago</p>
             </div>
-
             <button onclick="acknowledge({{ notif.id }})"
-                class="bg-green-500 text-white px-3 py-1 rounded">
+                    class="bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600 transition">
                 Noted
             </button>
         </div>
@@ -79,8 +87,10 @@
     {% endfor %}
 </div>
 
+<!-- ============================================ -->
+<!-- SERVICE REQUESTS -->
+<!-- ============================================ -->
 <h2 class="text-xl font-bold mb-4">Service Requests</h2>
-
 <div id="requests-section" class="space-y-3">
     {% for req in requests %}
         <div class="bg-yellow-100 p-4 rounded flex justify-between items-center">
@@ -98,26 +108,105 @@
     {% endfor %}
 </div>
 
-<h2 class="text-xl font-bold mb-4 mt-6">Orders</h2>
+<!-- ============================================ -->
+<!-- READY TO SERVE SECTION -->
+<!-- ============================================ -->
+<h2 class="text-xl font-bold mb-4 mt-6 flex items-center gap-2">
+    <span>🍽️ Ready to Serve</span>
+    <span id="ready-count" class="bg-green-500 text-white text-sm px-2 py-1 rounded-full"></span>
+</h2>
+<div id="ready-orders-section" class="space-y-3 mb-6">
+    {% for order in orders %}
+        {% if order.status == 'ready' %}
+            <div id="ready-order-{{ order.id }}" class="bg-green-100 border-l-4 border-green-500 p-4 rounded shadow animate-pulse">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <p class="font-bold text-lg">
+                            Table 
+                            {% if order.active_session %}
+                                {{ order.active_session.table.number }}
+                            {% elif order.session %}
+                                {{ order.session.table.number }}
+                            {% endif %}
+                        </p>
+                        <p class="text-sm text-gray-600">Order #{{ order.id }}</p>
+                        <div class="mt-2">
+                            {% for item in order.items.all %}
+                                <p class="text-sm">{{ item.product.name }} x{{ item.quantity }}</p>
+                            {% endfor %}
+                        </div>
+                        <p class="text-xs text-green-600 mt-1">✓ Ready for serving</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="markServed({{ order.id }})"
+                                class="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition">
+                            ✓ Mark as Served
+                        </button>
+                        <button onclick="viewOrderDetails({{ order.id }})"
+                                class="bg-gray-600 text-white px-3 py-2 rounded-lg hover:bg-gray-700 transition">
+                            📋 Details
+                        </button>
+                    </div>
+                </div>
+            </div>
+        {% endif %}
+    {% empty %}
+        <p id="no-ready-orders" class="text-gray-500">No ready orders - check back soon!</p>
+    {% endfor %}
+</div>
 
+<!-- ============================================ -->
+<!-- ALL ORDERS SECTION -->
+<!-- ============================================ -->
+<h2 class="text-xl font-bold mb-4 mt-6">📋 All Orders</h2>
 <div id="orders-section" class="space-y-3">
     {% for order in orders %}
-        <div class="bg-white p-4 rounded shadow flex justify-between items-center">
+        <div id="order-{{ order.id }}" class="bg-white p-4 rounded shadow flex justify-between items-center">
             <div>
                 <p class="font-semibold">
-                    Order #{{ order.id }} - Table {{ order.session.table.number }}
+                    Order #{{ order.id }} - Table 
+                    {% if order.active_session %}
+                        {{ order.active_session.table.number }}
+                    {% elif order.session %}
+                        {{ order.session.table.number }}
+                    {% endif %}
                 </p>
                 <p class="text-sm text-gray-500">
-                    Status: {{ order.status }}
+                    Status: 
+                    <span class="
+                        {% if order.status == 'pending' %}text-yellow-600
+                        {% elif order.status == 'preparing' %}text-blue-600
+                        {% elif order.status == 'ready' %}text-green-600 font-bold
+                        {% elif order.status == 'served' %}text-gray-600
+                        {% elif order.status == 'needs_confirmation' %}text-orange-600 font-bold
+                        {% endif %}
+                    ">
+                        {{ order.get_status_display|default:order.status }}
+                    </span>
                 </p>
+                {% if order.status == 'preparing' %}
+                    <p class="text-xs text-gray-500">Being prepared in kitchen</p>
+                {% endif %}
+                {% if order.status == 'needs_confirmation' %}
+                    <p class="text-xs text-orange-500">Awaiting your approval</p>
+                {% endif %}
             </div>
-
             <div class="flex gap-2">
-                {% if order.status == "ready" %}
-                    <a href="{% url 'mark_served' order.id %}"
-                       class="bg-purple-500 text-white px-3 py-1 rounded hover:bg-purple-600">
-                        Mark Served
-                    </a>
+                <button onclick="viewOrderDetails({{ order.id }})"
+                        class="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 transition text-sm">
+                    View Items
+                </button>
+                {% if order.status == "preparing" %}
+                    <button onclick="checkOrderStatus({{ order.id }})"
+                            class="bg-gray-500 text-white px-3 py-1 rounded hover:bg-gray-600 transition text-sm">
+                        🔄 Check Status
+                    </button>
+                {% endif %}
+                {% if order.status == "needs_confirmation" %}
+                    <button onclick="confirmOrder({{ order.id }})"
+                            class="bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600 transition text-sm">
+                        ✓ Approve
+                    </button>
                 {% endif %}
             </div>
         </div>
@@ -129,29 +218,89 @@
 <audio id="notif-sound" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg"></audio>
 
 <script>
-setInterval(() => {
-    fetch(window.location.href)
-        .then(res => res.text())
-        .then(html => {
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
+// ==================== HELPER FUNCTIONS ====================
 
-            // Added "confirmation-wrapper" to the refresh list
-            ["tables-section", "requests-section", "orders-section", "confirmation-wrapper"].forEach(id => {
-                const newEl = doc.querySelector("#" + id);
-                const curEl = document.querySelector("#" + id);
+function getCSRFToken() {
+    return document.cookie.split('; ').find(row => row.startsWith('csrftoken='))?.split('=')[1];
+}
 
-                if (newEl && curEl && newEl.innerHTML !== curEl.innerHTML) {
-                    curEl.innerHTML = newEl.innerHTML;
-                }
-            });
-        });
-}, 15000);
-</script>
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    const bgColor = type === 'success' ? 'bg-green-500' : type === 'error' ? 'bg-red-500' : 'bg-blue-500';
+    toast.className = `fixed bottom-4 right-4 ${bgColor} text-white px-4 py-2 rounded shadow-lg z-50 animate-bounce`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
 
-<script>
-// Order Confirmation Actions
+function playSound() {
+    const audio = document.getElementById("notif-sound");
+    if (audio) {
+        audio.currentTime = 0;
+        audio.play().catch(() => {});
+    }
+}
+
+function updateReadyCount() {
+    const readyOrders = document.querySelectorAll('#ready-orders-section > div[id^="ready-order-"]');
+    const count = readyOrders.length;
+    const countBadge = document.getElementById('ready-count');
+    if (countBadge) {
+        countBadge.textContent = count;
+        countBadge.style.display = count > 0 ? 'inline-block' : 'none';
+    }
+    const noReadyMsg = document.getElementById('no-ready-orders');
+    if (noReadyMsg) {
+        noReadyMsg.style.display = count > 0 ? 'none' : 'block';
+    }
+}
+
+// ==================== ORDER DETAILS MODAL ====================
+
+function viewOrderDetails(orderId) {
+    fetch(`/order/${orderId}/details/`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'ok') {
+                showOrderModal(data.order);
+            }
+        })
+        .catch(error => console.error('Error:', error));
+}
+
+function showOrderModal(order) {
+    const modal = document.createElement('div');
+    modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+    modal.innerHTML = `
+        <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-bold">Order #${order.id}</h3>
+                <button onclick="this.closest('.fixed').remove()" class="text-gray-500 hover:text-gray-700">✕</button>
+            </div>
+            <div class="mb-4">
+                <p><strong>Table:</strong> ${order.table}</p>
+                <p><strong>Status:</strong> <span class="font-semibold ${order.status === 'ready' ? 'text-green-600' : ''}">${order.status}</span></p>
+                <p><strong>Created:</strong> ${new Date(order.created_at).toLocaleString()}</p>
+            </div>
+            <div class="mb-4">
+                <h4 class="font-semibold mb-2">Items:</h4>
+                ${order.items.map(item => `
+                    <div class="flex justify-between text-sm py-1">
+                        <span>${item.product} x${item.quantity}</span>
+                        <span class="${item.status === 'ready' ? 'text-green-600' : 'text-gray-500'}">${item.status}</span>
+                    </div>
+                `).join('')}
+            </div>
+            <button onclick="this.closest('.fixed').remove()" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 w-full">Close</button>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
+// ==================== ORDER ACTIONS ====================
+
 function confirmOrder(orderId) {
+    console.log("Confirming order:", orderId);
     fetch(`/waiter/confirm-order/${orderId}/`, {
         method: 'POST',
         headers: {
@@ -161,30 +310,94 @@ function confirmOrder(orderId) {
     })
     .then(response => response.json())
     .then(data => {
-        if (data.status === 'confirmed') {
-            document.getElementById(`confirm-order-${orderId}`)?.remove();
-            // Optional: You could call a function to refresh the orders-section immediately
+        console.log("Confirm response:", data);
+        if (data.status === 'confirmed' || data.status === 'success') {
+            // Remove from DOM immediately
+            const orderElement = document.getElementById(`confirm-order-${orderId}`);
+            if (orderElement) orderElement.remove();
+            
+            // Also remove from notification if exists
+            const notifElement = document.querySelector(`#notif-${orderId}`);
+            if (notifElement) notifElement.remove();
+            
+            showToast(`✅ Order #${orderId} confirmed and sent to kitchen!`, 'success');
+            playSound();
+            
+            // Refresh sections to update all displays
+            setTimeout(() => refreshSections(), 500);
+        } else {
+            showToast(`Error: ${data.error || 'Could not confirm order'}`, 'error');
         }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showToast('Network error. Please try again.', 'error');
     });
 }
 
 function rejectOrder(orderId) {
-    if (confirm('Reject this order? The customer will be notified.')) {
+    if (confirm('Are you sure you want to reject this order?')) {
         fetch(`/waiter/reject-order/${orderId}/`, {
             method: 'POST',
-            headers: {
-                'X-CSRFToken': getCSRFToken(),
-                'Content-Type': 'application/json'
-            }
+            headers: { 'X-CSRFToken': getCSRFToken(), 'Content-Type': 'application/json' }
         })
         .then(response => response.json())
         .then(data => {
             if (data.status === 'rejected') {
-                document.getElementById(`confirm-order-${orderId}`)?.remove();
+                const orderElement = document.getElementById(`confirm-order-${orderId}`);
+                if (orderElement) orderElement.remove();
+                showToast(`Order #${orderId} rejected`, 'info');
             }
         });
     }
 }
+
+function markServed(orderId) {
+    if (confirm('Mark this order as served? This will update the order status and notify the cashier.')) {
+        fetch(`/order/${orderId}/served/`, {
+            method: 'POST',
+            headers: { 'X-CSRFToken': getCSRFToken(), 'Content-Type': 'application/json' }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'ok') {
+                const readyOrderEl = document.getElementById(`ready-order-${orderId}`);
+                if (readyOrderEl) {
+                    readyOrderEl.remove();
+                    updateReadyCount();
+                }
+                const orderEl = document.getElementById(`order-${orderId}`);
+                if (orderEl) {
+                    const statusSpan = orderEl.querySelector('.text-gray-500 span');
+                    if (statusSpan) {
+                        statusSpan.textContent = 'served';
+                        statusSpan.className = 'text-gray-600';
+                    }
+                }
+                showToast('Order marked as served!', 'success');
+                refreshSections();
+            } else {
+                showToast('Error marking order as served', 'error');
+            }
+        })
+        .catch(error => showToast('Network error occurred', 'error'));
+    }
+}
+
+function checkOrderStatus(orderId) {
+    fetch(`/order/${orderId}/status/`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'ok') {
+                showToast(`Order #${orderId} status: ${data.order_status}`, 'info');
+                if (data.order_status === 'ready' && !document.getElementById(`ready-order-${orderId}`)) {
+                    refreshSections();
+                }
+            }
+        });
+}
+
+// ==================== NOTIFICATIONS ====================
 
 function acknowledge(id) {
     fetch(`/api/notifications/${id}/read/`, {
@@ -210,30 +423,7 @@ function renderNotification(data) {
         <button onclick="acknowledge(${id})" class="bg-green-500 text-white px-3 py-1 rounded">Noted</button>
     `;
     container.prepend(el);
-}
-
-function connectSocket() {
-    const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
-    const socket = new WebSocket(protocol + window.location.host + "/ws/notifications/");
-
-    socket.onmessage = (e) => {
-        const data = JSON.parse(e.data);
-        if (data.type === "payment_done") {
-            document.querySelectorAll(`[data-order="${data.order_id}"]`).forEach(el => el.remove());
-            return;
-        }
-        if (data.type === "order_ready" || !data.type) {
-            renderNotification(data);
-            playSound();
-            highlightTableFromMessage(data.message);
-        }
-        // If a new customer order is placed, trigger a refresh of the confirmation section
-        if (data.type === "new_customer_order") {
-            playSound();
-        }
-    };
-
-    socket.onclose = () => setTimeout(connectSocket, 3000);
+    playSound();
 }
 
 function highlightTableFromMessage(message) {
@@ -241,23 +431,198 @@ function highlightTableFromMessage(message) {
     if (!match) return;
     const el = document.querySelector(`[data-table="${match[1]}"]`);
     if (!el) return;
-    el.classList.add("ring-4", "ring-green-500");
-    setTimeout(() => el.classList.remove("ring-4", "ring-green-500"), 8000);
+    el.classList.add("ring-4", "ring-green-500", "animate-pulse");
+    setTimeout(() => el.classList.remove("ring-4", "ring-green-500", "animate-pulse"), 8000);
 }
 
-function playSound() {
-    const audio = document.getElementById("notif-sound");
-    if (audio) {
-        audio.currentTime = 0;
-        audio.play().catch(() => {});
+// ==================== DYNAMIC ORDER APPROVAL ====================
+
+function addOrderToApprovalSection(data) {
+    // Check if order already exists in approval section
+    if (document.getElementById(`confirm-order-${data.order_id}`)) {
+        return;
     }
+    
+    // Get or create approval wrapper
+    let approvalWrapper = document.getElementById('confirmation-wrapper');
+    let approvalSection = document.getElementById('confirmation-section');
+    
+    // If no approval section exists, create it
+    if (!approvalWrapper) {
+        const tablesSection = document.getElementById('tables-section');
+        if (!tablesSection) return;
+        
+        approvalWrapper = document.createElement('div');
+        approvalWrapper.id = 'confirmation-wrapper';
+        approvalWrapper.innerHTML = `
+            <h2 class="text-xl font-bold mb-4 mt-6 bg-yellow-100 p-2 rounded">⏳ Orders Awaiting Your Approval</h2>
+            <div id="confirmation-section" class="space-y-3 mb-6"></div>
+        `;
+        tablesSection.insertAdjacentElement('afterend', approvalWrapper);
+        approvalSection = document.getElementById('confirmation-section');
+    } else {
+        // If wrapper exists but section might be missing
+        approvalSection = document.getElementById('confirmation-section');
+        if (!approvalSection) {
+            const header = approvalWrapper.querySelector('h2');
+            if (header) {
+                header.insertAdjacentHTML('afterend', '<div id="confirmation-section" class="space-y-3 mb-6"></div>');
+                approvalSection = document.getElementById('confirmation-section');
+            }
+        }
+    }
+    
+    if (!approvalSection) return;
+    
+    // Create the approval card
+    const orderCard = document.createElement('div');
+    orderCard.id = `confirm-order-${data.order_id}`;
+    orderCard.className = 'bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded shadow';
+    orderCard.innerHTML = `
+        <div class="flex justify-between items-start">
+            <div>
+                <p class="font-bold text-lg">Table ${data.table}</p>
+                <p class="text-sm text-gray-600">Order #${data.order_id} - Customer Order</p>
+                <div class="mt-2">
+                    <p class="text-sm text-gray-500">Loading items...</p>
+                </div>
+                <p class="text-xs text-gray-500 mt-2">Just now</p>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="confirmOrder(${data.order_id})" 
+                        class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition font-semibold">
+                    ✓ Approve Order
+                </button>
+                <button onclick="rejectOrder(${data.order_id})" 
+                        class="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition">
+                    ✗ Reject
+                </button>
+            </div>
+        </div>
+    `;
+    
+    // Add to approval section at the top
+    approvalSection.prepend(orderCard);
+    
+    // Fetch order details to populate items
+    fetch(`/order/${data.order_id}/details/`)
+        .then(response => response.json())
+        .then(details => {
+            if (details.status === 'ok' && details.order && details.order.items) {
+                const itemsHtml = details.order.items.map(item => 
+                    `<p class="text-sm">${item.product} x${item.quantity}</p>`
+                ).join('');
+                const itemsContainer = orderCard.querySelector('.mt-2');
+                if (itemsContainer) {
+                    itemsContainer.innerHTML = itemsHtml;
+                }
+            }
+        })
+        .catch(error => console.error('Error fetching order details:', error));
 }
 
-function getCSRFToken() {
-    return document.cookie.split('; ').find(row => row.startsWith('csrftoken='))?.split('=')[1];
+// ==================== WEBSOCKET ====================
+
+function connectSocket() {
+    const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+    const socket = new WebSocket(protocol + window.location.host + "/ws/notifications/");
+
+    socket.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        console.log("📨 WS EVENT:", data);
+
+        // Payment events
+        if (data.type === "payment_done") {
+            document.querySelectorAll(`[data-order="${data.order_id}"]`).forEach(el => el.remove());
+            showToast(`Payment received for order #${data.order_id}`, 'success');
+            return;
+        }
+        
+        // Order ready events
+        if (data.type === "order_ready" || (data.message && data.message.includes("READY"))) {
+            renderNotification(data);
+            playSound();
+            highlightTableFromMessage(data.message);
+            refreshSections();
+            return;
+        }
+        
+        // NEW: Customer order needs approval - Add to approval section dynamically
+        if (data.type === "customer_order" && data.needs_approval === true) {
+            console.log("🆕 New order needs approval:", data);
+            addOrderToApprovalSection(data);
+            playSound();
+            showToast(`New order from Table ${data.table} needs approval`, 'warning');
+            return;
+        }
+        
+        // Trusted customer orders (auto-approved)
+        if (data.type === "new_order" && data.message && data.message.includes("TRUSTED")) {
+            renderNotification(data);
+            playSound();
+            refreshSections();
+            return;
+        }
+        
+        // Regular notifications
+        if (data.type === "order_preparing" || data.type === "customer_order") {
+            renderNotification(data);
+            refreshSections();
+        }
+    };
+    
+    socket.onclose = () => {
+        console.warn("🔌 WebSocket disconnected, reconnecting...");
+        setTimeout(connectSocket, 3000);
+    };
+    
+    socket.onerror = (error) => {
+        console.error("WebSocket error:", error);
+    };
 }
 
-connectSocket();
+// ==================== PAGE REFRESH ====================
+
+function refreshSections() {
+    fetch(window.location.href)
+        .then(res => res.text())
+        .then(html => {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const sections = ["tables-section", "requests-section", "orders-section", "confirmation-wrapper", "ready-orders-section"];
+            sections.forEach(id => {
+                const newEl = doc.querySelector("#" + id);
+                const curEl = document.querySelector("#" + id);
+                if (newEl && curEl && newEl.innerHTML !== curEl.innerHTML) {
+                    curEl.innerHTML = newEl.innerHTML;
+                }
+            });
+            attachEventListeners();
+            updateReadyCount();
+        })
+        .catch(error => console.error("Refresh error:", error));
+}
+
+function attachEventListeners() {
+    document.querySelectorAll('#ready-orders-section button').forEach(btn => {
+        if (btn.textContent.includes('Mark as Served')) {
+            const orderId = btn.closest('[id^="ready-order-"]')?.id.split('-').pop();
+            if (orderId && !btn.hasAttribute('data-listener')) {
+                btn.setAttribute('data-listener', 'true');
+                btn.onclick = () => markServed(orderId);
+            }
+        }
+    });
+}
+
+// ==================== INITIALIZATION ====================
+
+document.addEventListener('DOMContentLoaded', () => {
+    connectSocket();
+    updateReadyCount();
+    attachEventListeners();
+    setInterval(() => refreshSections(), 15000);
+});
 </script>
 
 {% endblock %}

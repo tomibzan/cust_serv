@@ -1,9 +1,11 @@
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
-from orders.models import Order
+from django.utils import timezone
+from orders.models import Order, ActiveTableSession
 from notifications.models import Notification
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
+from datetime import date
 
 
 @receiver(post_save, sender=Order)
@@ -51,3 +53,56 @@ def handle_order_paid(sender, instance, created, **kwargs):
         )
 
         print("📡 WS payment event sent (signal)")
+
+@receiver(pre_save, sender=Order)
+def assign_waiter_to_order(sender, instance, **kwargs):
+    """Automatically assign waiter to order if not set"""
+    
+    # Only process new orders
+    if instance.pk:
+        return
+    
+    # If order already has a waiter, skip
+    if instance.active_session and instance.active_session.waiter:
+        return
+    if instance.session and instance.session.assigned_employee:
+        return
+    
+    # Try to find active session for the table
+    table = None
+    if instance.session:
+        table = instance.session.table
+    elif instance.active_session:
+        table = instance.active_session.table
+    
+    if table:
+        from .models import WorkShift
+        today = date.today()
+        
+        # Find shift for this table
+        shift = WorkShift.objects.filter(
+            shift_date=today,
+            is_active=True,
+            table_assignments__table=table
+        ).first()
+        
+        if shift:
+            # Create or get active session
+            active_session, created = ActiveTableSession.objects.get_or_create(
+                table=table,
+                is_active=True,
+                defaults={
+                    'waiter': shift.employee,
+                    'started_at': timezone.now()
+                }
+            )
+            if not created and not active_session.waiter:
+                active_session.waiter = shift.employee
+                active_session.save()
+            
+            instance.active_session = active_session
+            
+            # Also update legacy session if exists
+            if instance.session and not instance.session.assigned_employee:
+                instance.session.assigned_employee = shift.employee
+                instance.session.save()        

@@ -1,5 +1,5 @@
 from django.db import models
-from orders.models import Order
+from orders.models import Order, TableSession, ActiveTableSession
 from django.conf import settings
 
 User = settings.AUTH_USER_MODEL
@@ -19,7 +19,10 @@ class Payment(models.Model):
     )
 
     order = models.OneToOneField(Order, on_delete=models.CASCADE)
-    session = models.ForeignKey('orders.TableSession', on_delete=models.CASCADE)
+    # Make session nullable to support both legacy and active sessions
+    session = models.ForeignKey(TableSession, on_delete=models.SET_NULL, null=True, blank=True)
+    active_session = models.ForeignKey(ActiveTableSession, on_delete=models.SET_NULL, null=True, blank=True)
+    
     method = models.CharField(max_length=20, choices=METHOD_CHOICES)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     tip = models.DecimalField(max_digits=10, decimal_places=2, default=0)

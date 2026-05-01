@@ -1,4 +1,5 @@
-# payments/views.py - Complete corrected version
+# payments/views.py - Complete rewritten version
+
 from django.shortcuts import get_object_or_404, redirect
 from django.utils import timezone
 from django.contrib.auth.decorators import login_required
@@ -11,9 +12,10 @@ from django.http import JsonResponse
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import generics, permissions
+from decimal import Decimal
 
 from .models import Payment, PaymentProof
-from orders.models import Order, TableSession  # ← IMPORTANT: Import Order model
+from orders.models import Order, TableSession, ActiveTableSession
 from notifications.models import Notification
 
 from channels.layers import get_channel_layer
@@ -28,28 +30,59 @@ def create_payment_with_proof(request):
     
     try:
         # Parse request data
-        order_id = request.POST.get('order_id')
+        if request.content_type == 'application/json':
+            import json
+            data = json.loads(request.body)
+            order_id = data.get('order_id')
+            tip_amount = float(data.get('tip', 0))
+            payment_method = data.get('method', 'cash')
+            proof_reference = data.get('proof_reference', '')
+            proof_image = None
+        else:
+            order_id = request.POST.get('order_id')
+            tip_amount = float(request.POST.get('tip', 0))
+            payment_method = request.POST.get('method', 'cash')
+            proof_image = request.FILES.get('proof_image')
+            proof_reference = request.POST.get('proof_reference', '')
+        
         if not order_id:
             return JsonResponse({"error": "order_id is required"}, status=400)
         
-        tip_amount = float(request.POST.get('tip', 0))
-        payment_method = request.POST.get('method', 'cash')
-        proof_image = request.FILES.get('proof_image')
-        proof_reference = request.POST.get('proof_reference', '')
+        print(f"💰 Creating payment for order #{order_id}, method: {payment_method}, tip: {tip_amount}")
         
-        # Get the order - FIXED: Use Order model class directly
+        # Get the order
         order = get_object_or_404(Order, id=order_id)
         
-        # Get the session from the order
+        # Check if order is ready for payment
+        if order.status not in ['ready', 'served']:
+            return JsonResponse({"error": f"Order is not ready for payment (status: {order.status})"}, status=400)
+        
+        # Ensure order has a legacy session for payment
+        if not order.session and order.active_session:
+            # Create legacy session from active session
+            from orders.models import TableSession
+            legacy_session, created = TableSession.objects.get_or_create(
+                id=order.active_session.id,
+                defaults={
+                    'table': order.active_session.table,
+                    'assigned_employee': order.active_session.waiter,
+                    'is_active': order.active_session.is_active,
+                    'started_at': order.active_session.started_at,
+                    'ended_at': order.active_session.ended_at,
+                    'is_client_identified': order.active_session.is_client_identified
+                }
+            )
+            order.session = legacy_session
+            order.save()
+            print(f"✅ Created legacy session for order #{order.id}")
+        
+        # Get session (now guaranteed to exist)
         session = order.session
         if not session:
             return JsonResponse({"error": "Order has no associated table session"}, status=400)
         
-        # Calculate total from all items in this order
-        subtotal = 0
-        for item in order.items.all():
-            subtotal += float(item.quantity) * float(item.price_at_time)
-        
+        # Calculate total
+        subtotal = float(sum(item.quantity * float(item.price_at_time) for item in order.items.all()))
         total_amount = subtotal + tip_amount
         
         with transaction.atomic():
@@ -67,6 +100,7 @@ def create_payment_with_proof(request):
             payment = Payment.objects.create(
                 order=order,
                 session=session,
+                active_session=order.active_session if order.active_session else None,
                 method=payment_method,
                 amount=total_amount,
                 tip=tip_amount,
@@ -74,10 +108,12 @@ def create_payment_with_proof(request):
                 created_by=request.user
             )
             
+            print(f"✅ Created payment #{payment.id} for order #{order.id}")
+            
             # Handle payment proof
             if proof_image:
                 file_path = default_storage.save(
-                    f'payments/proof_{payment.id}_{order.id}.jpg', 
+                    f'payments/proof_{payment.id}_{order.id}.jpg',
                     ContentFile(proof_image.read())
                 )
                 PaymentProof.objects.create(
@@ -103,7 +139,7 @@ def create_payment_with_proof(request):
                         "payment_id": payment.id,
                         "order_id": order.id,
                         "table": session.table.number,
-                        "amount": float(total_amount),
+                        "amount": total_amount,
                         "tip": tip_amount,
                         "subtotal": subtotal,
                         "message": f"💰 Payment request: Table {session.table.number} - {total_amount} ETB"
@@ -152,9 +188,19 @@ def approve_payment(request, payment_id):
             payment.status = 'approved'
             payment.save()
             
-            session = payment.session
+            # Get order and session info
             order = payment.order
-            waiter = session.assigned_employee if session else None
+            
+            # Try to get waiter from active_session or legacy session
+            waiter = None
+            table_number = None
+            
+            if order.active_session:
+                waiter = order.active_session.waiter
+                table_number = order.active_session.table.number
+            elif order.session:
+                waiter = order.session.assigned_employee
+                table_number = order.session.table.number
             
             # Distribute tip to waiter
             tip_distributed = 0
@@ -168,21 +214,30 @@ def approve_payment(request, payment_id):
                     user=waiter,
                     type='payment_done',
                     order=order,
-                    message=f"✨ You received {payment.tip} ETB tip for Table {session.table.number}",
+                    message=f"✨ You received {payment.tip} ETB tip for Table {table_number}",
                     is_read=False
                 )
+                print(f"💰 Added tip {payment.tip} to waiter {waiter.username}")
             
             # Mark order as paid
             order.status = 'paid'
             order.save()
             
-            # Close session if all orders are paid
-            if session:
-                unpaid_orders = session.order_set.exclude(status='paid').count()
+            # Close session if all orders are paid (for legacy sessions)
+            if order.session:
+                unpaid_orders = order.session.order_set.exclude(status='paid').count()
                 if unpaid_orders == 0:
-                    session.is_active = False
-                    session.ended_at = timezone.now()
-                    session.save()
+                    order.session.is_active = False
+                    order.session.ended_at = timezone.now()
+                    order.session.save()
+            
+            # Close active session if all orders are paid
+            if order.active_session:
+                unpaid_orders = order.active_session.get_orders().exclude(status='paid').count()
+                if unpaid_orders == 0:
+                    order.active_session.is_active = False
+                    order.active_session.ended_at = timezone.now()
+                    order.active_session.save()
             
             # Close all notifications for this order
             Notification.objects.filter(order=order, is_closed=False).update(is_closed=True)
@@ -200,7 +255,8 @@ def approve_payment(request, payment_id):
                             "order_id": order.id,
                             "payment_id": payment.id,
                             "tip": tip_distributed,
-                            "message": f"✅ Payment approved for Table {session.table.number} - Tip: {tip_distributed} ETB added"
+                            "table": table_number,
+                            "message": f"✅ Payment approved for Table {table_number} - Tip: {tip_distributed} ETB added to your balance"
                         }
                     }
                 )
@@ -214,8 +270,8 @@ def approve_payment(request, payment_id):
                         "type": "payment_approved",
                         "payment_id": payment.id,
                         "order_id": order.id,
-                        "table": session.table.number if session else '?',
-                        "message": f"✅ Payment #{payment.id} for Table {session.table.number if session else '?'} approved"
+                        "table": table_number,
+                        "message": f"✅ Payment #{payment.id} for Table {table_number} approved"
                     }
                 }
             )
@@ -253,14 +309,24 @@ def reject_payment(request, payment_id):
         payment.status = 'rejected'
         payment.save()
         
-        session = payment.session
-        waiter = session.assigned_employee if session else None
+        # Get order and waiter
+        order = payment.order
+        
+        waiter = None
+        table_number = None
+        if order.active_session:
+            waiter = order.active_session.waiter
+            table_number = order.active_session.table.number
+        elif order.session:
+            waiter = order.session.assigned_employee
+            table_number = order.session.table.number
         
         if waiter:
             Notification.objects.create(
                 user=waiter,
                 type='payment_done',
-                message=f"❌ Payment rejected for Table {session.table.number}: {reason}",
+                order=order,
+                message=f"❌ Payment rejected for Table {table_number}: {reason}",
                 is_read=False
             )
             
@@ -272,8 +338,10 @@ def reject_payment(request, payment_id):
                     "data": {
                         "type": "payment_rejected",
                         "payment_id": payment.id,
+                        "order_id": order.id,
                         "reason": reason,
-                        "message": f"❌ Payment rejected for Table {session.table.number}"
+                        "table": table_number,
+                        "message": f"❌ Payment rejected for Table {table_number}"
                     }
                 }
             )
@@ -281,10 +349,11 @@ def reject_payment(request, payment_id):
         return JsonResponse({"status": "rejected", "payment_id": payment.id})
         
     except Exception as e:
+        print(f"❌ Payment rejection error: {str(e)}")
         return JsonResponse({"error": str(e)}, status=500)
 
 
-# Keep your existing REST API views if needed
+# Legacy REST API endpoints (keep for backward compatibility)
 @api_view(['POST'])
 def create_payment(request):
     """Legacy payment creation endpoint"""
@@ -333,5 +402,5 @@ def payment_status(request, payment_id):
     return Response({
         "status": payment.status,
         "amount": str(payment.amount),
-        "session": payment.session.id
+        "session": payment.session.id if payment.session else None
     })

@@ -1,6 +1,7 @@
 import json
 from django.db import transaction
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.http import require_http_methods, require_GET, require_POST
 from rest_framework import generics, permissions
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -8,13 +9,16 @@ from django.utils import timezone
 from django.shortcuts import redirect, get_object_or_404, render
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-from orders.models import TableSession, OrderItem, Order, ServiceRequest 
+from orders.models import TableSession, OrderItem, Order, ServiceRequest
+from decimal import Decimal 
 from products.models import Product, ProductSource
 from notifications.models import Notification
 from .models import ServiceRequest, Order, KitchenLog, TableSession
 from .serializers import ServiceRequestSerializer
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.contrib import messages
+from users.models import User, Client
 
 
 # =========================
@@ -366,31 +370,132 @@ def reject_customer_order(request, order_id):
     
     return JsonResponse({'status': 'rejected', 'order_id': order.id})
 
+@login_required
+@require_http_methods(["POST"])
+def waiter_confirm_order(request, order_id):
+    """Waiter confirms a customer order - sends items to kitchen stations"""
+    
+    try:
+        with transaction.atomic():
+            order = get_object_or_404(Order, id=order_id, status='needs_confirmation')
+            
+            # Verify the waiter is assigned to this session
+            if order.session.assigned_employee != request.user:
+                messages.error(request, "You are not assigned to this table's session")
+                return redirect('waiter_dashboard')
+            
+            # Update order status
+            order.status = 'confirmed'
+            order.save()
+            
+            channel_layer = get_channel_layer()
+            items_sent = 0
+            
+            # Update all items from pending_approval to pending and send to stations
+            for item in order.items.filter(status='pending_approval'):
+                item.status = 'pending'
+                item.save()
+                
+                # Send to appropriate station based on product source
+                station_type = item.product_source.station_type if item.product_source else 'kitchen'
+                
+                # Send WebSocket notification to station group
+                async_to_sync(channel_layer.group_send)(
+                    f"station_{station_type}",
+                    {
+                        "type": "send_notification",
+                        "data": {
+                            "type": "new_order",
+                            "order_id": order.id,
+                            "item_id": item.id,
+                            "product": item.product.name,
+                            "quantity": item.quantity,
+                            "table": order.session.table.number,
+                            "status": item.status,
+                            "message": f"🆕 NEW ORDER: Table {order.session.table.number} - {item.product.name} x{item.quantity}"
+                        }
+                    }
+                )
+                items_sent += 1
+                print(f"📨 Sent item {item.product.name} to station_{station_type}")
+            
+            # Notify kitchen supervisor (optional)
+            async_to_sync(channel_layer.group_send)(
+                "supervisors",
+                {
+                    "type": "send_notification",
+                    "data": {
+                        "type": "order_confirmed",
+                        "order_id": order.id,
+                        "table": order.session.table.number,
+                        "items_count": items_sent,
+                        "message": f"✅ Order #{order.id} confirmed - {items_sent} items sent to kitchen"
+                    }
+                }
+            )
+            
+            # Create notification for kitchen staff (optional - can rely on station notifications)
+            # This creates a persistent notification in the database
+            kitchen_users = User.objects.filter(role='kitchen', is_active=True)
+            for kitchen_user in kitchen_users:
+                Notification.objects.create(
+                    user=kitchen_user,
+                    type='order_confirmed',
+                    order=order,
+                    message=f"🆕 New confirmed order from Table {order.session.table.number}",
+                    reference_id=order.id,
+                    is_read=False
+                )
+            
+            messages.success(request, f"Order #{order.id} confirmed and sent to kitchen with {items_sent} items")
+            
+    except Order.DoesNotExist:
+        messages.error(request, "Order not found or already confirmed")
+    except Exception as e:
+        print(f"❌ Error confirming order {order_id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        messages.error(request, f"Error confirming order: {str(e)}")
+    
+    return redirect('waiter_dashboard')
+
 
 @login_required
 def mark_order_served(request, order_id):
+    """Mark order as served"""
     order = get_object_or_404(Order, id=order_id)
-
-    # 🔒 Only waiter assigned to session can do this
-    if order.session.assigned_employee != request.user:
+    
+    # Check authorization - works with both session types
+    is_authorized = False
+    
+    if order.active_session and order.active_session.waiter:
+        if order.active_session.waiter == request.user:
+            is_authorized = True
+    elif order.session and order.session.assigned_employee:
+        if order.session.assigned_employee == request.user:
+            is_authorized = True
+    
+    if not is_authorized:
         return redirect('waiter_dashboard')
-
+    
     order.status = 'served'
     order.save()
-
-    # 🔔 Notify cashier (optional for now)
+    
+    # Notify cashier
     channel_layer = get_channel_layer()
-
     async_to_sync(channel_layer.group_send)(
-        "station_cashier",  # group later - using consistent naming
+        "cashiers",
         {
             "type": "send_notification",
             "data": {
+                "type": "order_ready_for_payment",
+                "order_id": order.id,
+                "table": order.table_number,
                 "message": f"Order #{order.id} served - ready for payment"
             }
         }
     )
-
+    
     return redirect('waiter_dashboard')
 
 
@@ -407,7 +512,6 @@ def close_session(request, session_id):
 
     return redirect('waiter_dashboard')
 
-
 @login_required
 @csrf_exempt
 def update_item_status(request, item_id, status):
@@ -416,6 +520,7 @@ def update_item_status(request, item_id, status):
     print(f"\n🔍 update_item_status called:")
     print(f"  - item_id: {item_id}")
     print(f"  - status: {status}")
+    print(f"  - user: {request.user.username} ({request.user.role})")
     
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=400)
@@ -426,18 +531,17 @@ def update_item_status(request, item_id, status):
             item = get_object_or_404(OrderItem, id=item_id)
             old_status = item.status
             
-            # IMPORTANT: Get the order BEFORE using it
-            order = item.order  # ← This line was missing/out of scope!
+            # IMPORTANT: Get the order and related objects BEFORE using them
+            order = item.order  # ← Critical line that was missing!
             session = order.session
             waiter = session.assigned_employee if session else None
+            table_number = session.table.number if session else 'Unknown'
             
             print(f"  - Order ID: {order.id}")
-            print(f"  - Table: {session.table.number if session else 'Unknown'}")
+            print(f"  - Table: {table_number}")
+            print(f"  - Waiter: {waiter.username if waiter else 'None'}")
             print(f"  - Old status: {old_status}")
             print(f"  - New status: {status}")
-            
-            # Update the item status
-            item.status = status
             
             # Timestamp tracking
             if status == 'preparing' and not item.started_at:
@@ -448,60 +552,114 @@ def update_item_status(request, item_id, status):
                 item.completed_at = timezone.now()
                 print(f"  - Completed at: {item.completed_at}")
             
+            # Update the item status
+            item.status = status
             item.save()
             
-            # Handle READY status - notify waiter and cashier
+            # Handle READY status - PRIORITIZE WAITER notification
             if status == 'ready' and old_status != 'ready':
-                print(f"  - Notifying cashiers group for order #{order.id}")
+                print(f"  - 🍽️ Item READY - sending notifications for order #{order.id}")
                 
+                channel_layer = get_channel_layer()
+                
+                # 1️⃣ PRIMARY: Notify WAITER (most important - they need to serve)
                 if waiter:
-                    # Create notification with proper FK
+                    # Create or update notification for waiter
                     notification, created = Notification.objects.get_or_create(
                         user=waiter,
                         type='order_ready',
-                        order=order,  # ← Now order is defined
+                        order=order,
                         reference_id=item.id,
                         defaults={
-                            'message': f"{item.product.name} for Table {session.table.number} is READY",
+                            'message': f"🍽️ READY: {item.product.name} x{item.quantity} for Table {table_number}",
                             'is_read': False
                         }
                     )
                     
                     if not created:
                         # Update existing notification
-                        notification.message = f"{item.product.name} for Table {session.table.number} is READY"
+                        notification.message = f"🍽️ READY: {item.product.name} x{item.quantity} for Table {table_number}"
                         notification.is_read = False
                         notification.save()
                     
-                    channel_layer = get_channel_layer()
-                    payload = {
+                    # WebSocket payload for waiter
+                    waiter_payload = {
                         "type": "order_ready",
                         "id": notification.id,
                         "order_id": order.id,
                         "item_id": item.id,
-                        "message": notification.message,
-                        "table": session.table.number,
                         "product": item.product.name,
+                        "quantity": item.quantity,
+                        "table": table_number,
+                        "message": notification.message
                     }
                     
-                    # Notify waiter
+                    # Send to waiter's personal channel
                     async_to_sync(channel_layer.group_send)(
                         f"user_{waiter.id}",
-                        {"type": "send_notification", "data": payload}
+                        {"type": "send_notification", "data": waiter_payload}
                     )
-                    print(f"  - Notified waiter: {waiter.username}")
-                    
-                    # Notify cashiers group
-                    async_to_sync(channel_layer.group_send)(
-                        "cashiers",
-                        {"type": "send_notification", "data": payload}
-                    )
-                    print(f"  - Notified cashiers group")
-                    
+                    print(f"  ✅ Notified WAITER: {waiter.username} (ID: {waiter.id})")
                 else:
-                    print(f"  - No waiter assigned to this order")
+                    print(f"  ⚠️ No waiter assigned to this order - cashier will be primary")
+                
+                # 2️⃣ SECONDARY: Notify CASHIERS group (for billing/serving awareness)
+                cashier_payload = {
+                    "type": "order_ready_for_payment",
+                    "order_id": order.id,
+                    "item_id": item.id,
+                    "product": item.product.name,
+                    "quantity": item.quantity,
+                    "table": table_number,
+                    "message": f"💰 Order #{order.id} - {item.product.name} x{item.quantity} is ready for Table {table_number}"
+                }
+                
+                async_to_sync(channel_layer.group_send)(
+                    "cashiers",
+                    {"type": "send_notification", "data": cashier_payload}
+                )
+                print(f"  ✅ Notified CASHIER group")
+                
+                # 3️⃣ OPTIONAL: Notify CUSTOMER (if WebSocket is set up - nice-to-have)
+                # This is NOT critical for operations, just enhances UX
+                if session and hasattr(session, 'client') and session.client and session.client.is_validated:
+                    # Only enable this if you have customer WebSocket channels configured
+                    # customer_payload = {
+                    #     "type": "order_status_update",
+                    #     "order_id": order.id,
+                    #     "status": "ready",
+                    #     "message": f"✅ Your order ({item.product.name}) is ready! The waiter will bring it shortly."
+                    # }
+                    # async_to_sync(channel_layer.group_send)(
+                    #     f"session_{session.id}",
+                    #     {"type": "send_notification", "data": customer_payload}
+                    # )
+                    print(f"  ℹ️ Customer notification available (commented out by default)")
             
-            # Also update the main order status if all items are ready
+            # Handle PREPARING status notification
+            elif status == 'preparing' and old_status == 'pending':
+                print(f"  - 🔪 Item PREPARING - notifying waiter")
+                
+                channel_layer = get_channel_layer()
+                
+                if waiter:
+                    preparing_payload = {
+                        "type": "order_preparing",
+                        "order_id": order.id,
+                        "item_id": item.id,
+                        "product": item.product.name,
+                        "quantity": item.quantity,
+                        "table": table_number,
+                        "message": f"🔪 Kitchen started preparing {item.product.name} x{item.quantity} for Table {table_number}"
+                    }
+                    
+                    async_to_sync(channel_layer.group_send)(
+                        f"user_{waiter.id}",
+                        {"type": "send_notification", "data": preparing_payload}
+                    )
+                    print(f"  ✅ Notified WAITER: {waiter.username} about preparation")
+            
+            # Update the main order status if all items are ready
             if status == 'ready':
                 # Check if all items in this order are ready
                 all_items_ready = all(
@@ -512,13 +670,31 @@ def update_item_status(request, item_id, status):
                 if all_items_ready and order.status != 'ready':
                     order.status = 'ready'
                     order.save()
-                    print(f"  - All items ready, order #{order.id} status updated to 'ready'")
+                    print(f"  ✅ All items ready, order #{order.id} status updated to 'ready'")
+                    
+                    # Notify waiter that entire order is ready
+                    if waiter:
+                        channel_layer = get_channel_layer()
+                        order_ready_payload = {
+                            "type": "order_ready_complete",
+                            "order_id": order.id,
+                            "table": table_number,
+                            "message": f"🎉 ALL ITEMS READY: Complete order #{order.id} for Table {table_number} is ready to serve!"
+                        }
+                        
+                        async_to_sync(channel_layer.group_send)(
+                            f"user_{waiter.id}",
+                            {"type": "send_notification", "data": order_ready_payload}
+                        )
+                        print(f"  ✅ Notified WAITER about complete order readiness")
             
             return JsonResponse({
                 "status": "ok", 
                 "item_id": item_id, 
                 "new_status": status,
-                "order_id": order.id
+                "order_id": order.id,
+                "table": table_number,
+                "waiter_notified": waiter is not None
             })
             
     except Exception as e:
@@ -527,9 +703,8 @@ def update_item_status(request, item_id, status):
         traceback.print_exc()
         return JsonResponse({"error": str(e)}, status=500)
 
+# orders/views.py - Fix cashier_dashboard
 
-
-# orders/views.py
 @login_required
 def cashier_dashboard(request):
     """Show orders that are ready for payment"""
@@ -539,13 +714,13 @@ def cashier_dashboard(request):
     ).exclude(
         status='paid'
     ).select_related(
-        'session__table',
-        'session__assigned_employee'
+        'active_session__table',  # Use active_session instead of session
+        'session__table'  # Keep legacy for backward compatibility
     ).prefetch_related(
         'items__product'
     ).order_by('created_at')
-    
-    print(f"💰 Cashier dashboard: Found {orders.count()} ready orders")
+
+    print(f"💰 cashier_dashboard: Found {orders.count()} orders ready for payment")
     
     enriched_orders = []
     for order in orders:
@@ -561,13 +736,25 @@ def cashier_dashboard(request):
                 'price_at_time': float(item.price_at_time),
             })
         
-        enriched_orders.append({
-            'order': order,  # This is the key
-            'items': items_data,
-            'subtotal': subtotal,
-        })
+        # Fix: Get table number safely from either active_session or session
+        table_number = None
+        if order.active_session:
+            table_number = order.active_session.table.number
+        elif order.session:
+            table_number = order.session.table.number
         
-        print(f"  - Order #{order.id}: Table {order.session.table.number}, Status: {order.status}")
+        # Skip orders with no table (shouldn't happen but safety check)
+        if table_number is None:
+            print(f"⚠️ Order #{order.id} has no table association, skipping")
+            continue
+        
+        enriched_orders.append({
+            "order": order,
+            "items": items_data,
+            "subtotal": float(subtotal),
+            "table_number": table_number,
+        })
+        print(f"  - Order #{order.id}: Table {table_number}, Items: {len(items_data)}, Subtotal: {subtotal}")
     
     return render(request, "dashboard/cashier.html", {
         "orders": enriched_orders
@@ -604,3 +791,28 @@ def mark_order_paid(request, order_id):
     )
 
     return JsonResponse({"status": "paid"})
+
+@login_required
+def order_details(request, order_id):
+    """Get order details for AJAX requests"""
+    order = get_object_or_404(Order, id=order_id)
+    
+    items = []
+    for item in order.items.all():
+        items.append({
+            'product': item.product.name,
+            'quantity': item.quantity,
+            'price': float(item.price_at_time),
+            'status': item.status
+        })
+    
+    return JsonResponse({
+        'status': 'ok',
+        'order': {
+            'id': order.id,
+            'status': order.status,
+            'table': order.table_number,
+            'created_at': order.created_at.isoformat(),
+            'items': items
+        }
+    })

@@ -1,4 +1,4 @@
-<!-- templates/dashboard/cashier.html - Fixed version -->
+<!-- templates/dashboard/cashier.html -->
 {% extends "base.html" %}
 
 {% block content %}
@@ -12,7 +12,6 @@
             <div>
                 <h3 class="font-bold text-lg">Table {{ order_item.order.session.table.number }}</h3>
                 <p class="text-sm text-gray-500">Order #{{ order_item.order.id }}</p>
-                <!-- FIXED: Add null check for assigned_employee -->
                 <p class="text-xs text-gray-400">
                     Waiter: 
                     {% if order_item.order.session.assigned_employee %}
@@ -43,43 +42,32 @@
         
         <!-- Tip Input -->
         <div class="mb-3">
-            <label class="block text-sm font-medium text-gray-700 mb-1">
-                💝 Optional Tip (for waiter)
-            </label>
+            <label class="block text-sm font-medium text-gray-700 mb-1">💝 Optional Tip</label>
             <div class="flex gap-2">
                 <input type="number" id="tip-{{ order_item.order.id }}" 
                        class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 sm:text-sm"
                        placeholder="0.00" step="0.01" min="0" value="0"
                        onchange="updateTotal({{ order_item.order.id }}, {{ order_item.subtotal }})">
                 <div class="flex gap-1">
-                    <button type="button" onclick="setTip({{ order_item.order.id }}, 10, {{ order_item.subtotal }})" 
-                            class="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">10</button>
-                    <button type="button" onclick="setTip({{ order_item.order.id }}, 20, {{ order_item.subtotal }})" 
-                            class="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">20</button>
-                    <button type="button" onclick="setTip({{ order_item.order.id }}, 30, {{ order_item.subtotal }})" 
-                            class="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">30</button>
-                    <button type="button" onclick="setTip({{ order_item.order.id }}, 40, {{ order_item.subtotal }})" 
-                            class="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">40</button>
-                    <button type="button" onclick="setTip({{ order_item.order.id }}, 50, {{ order_item.subtotal }})" 
-                            class="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">50</button>
-                    <button type="button" onclick="setTip({{ order_item.order.id }}, 100, {{ order_item.subtotal }})" 
-                            class="px-2 py-1 text-sm bg-gray-100 rounded hover:bg-gray-200">100</button>                        
-                            
+                    <button type="button" onclick="setTip({{ order_item.order.id }}, 10, {{ order_item.subtotal }})" class="px-2 py-1 text-sm bg-gray-100 rounded">10</button>
+                    <button type="button" onclick="setTip({{ order_item.order.id }}, 20, {{ order_item.subtotal }})" class="px-2 py-1 text-sm bg-gray-100 rounded">20</button>
+                    <button type="button" onclick="setTip({{ order_item.order.id }}, 50, {{ order_item.subtotal }})" class="px-2 py-1 text-sm bg-gray-100 rounded">50</button>
+                    <button type="button" onclick="setTip({{ order_item.order.id }}, 100, {{ order_item.subtotal }})" class="px-2 py-1 text-sm bg-gray-100 rounded">100</button>
                 </div>
             </div>
         </div>
         
-        <!-- Total with Tip -->
+        <!-- Total -->
         <div class="flex justify-between font-bold text-lg mb-3 pt-2 border-t">
-            <span>Total to Pay:</span>
+            <span>Total:</span>
             <span id="total-{{ order_item.order.id }}">{{ order_item.subtotal }} ETB</span>
         </div>
         
         <!-- Payment Method -->
         <div class="mb-3">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Method</label>
             <select id="method-{{ order_item.order.id }}" 
-                    class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500"
+                    class="w-full rounded-md border-gray-300 shadow-sm"
                     onchange="toggleProofSection({{ order_item.order.id }})">
                 <option value="cash">💵 Cash</option>
                 <option value="pos">💳 POS Card</option>
@@ -87,16 +75,11 @@
             </select>
         </div>
         
-        <!-- Payment Proof Section -->
         <div id="proof-section-{{ order_item.order.id }}" class="mb-3 hidden">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Payment Proof</label>
-            <input type="file" id="proof-{{ order_item.order.id }}" accept="image/*" class="block w-full text-sm text-gray-500">
-            <input type="text" id="proof-ref-{{ order_item.order.id }}" 
-                   placeholder="Transaction reference number" 
-                   class="mt-2 w-full rounded-md border-gray-300 shadow-sm sm:text-sm">
+            <input type="file" id="proof-{{ order_item.order.id }}" accept="image/*" class="block w-full text-sm">
+            <input type="text" id="proof-ref-{{ order_item.order.id }}" placeholder="Ref #" class="mt-2 w-full rounded-md border-gray-300 shadow-sm text-sm">
         </div>
         
-        <!-- Process Payment Button -->
         <button onclick="processPayment(this, {{ order_item.order.id }}, {{ order_item.subtotal }})"
                 class="w-full bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition font-semibold">
             💰 Process Payment
@@ -110,14 +93,53 @@
 <audio id="notif-sound" src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"></audio>
 
 <script>
-// Your existing JavaScript functions here...
-// (keep the same JavaScript as before)
-
 let socket;
-let reconnectAttempts = 0;
-const maxReconnectAttempts = 10;
-let heartbeatInterval;
+let lastOrderCount = {{ orders|length }};
+let refreshInterval;
 
+// --- Auto-Refresh Logic ---
+function startAutoRefresh() {
+    // Check for updates every 30 seconds as a fallback to WebSockets
+    refreshInterval = setInterval(() => {
+        checkForUpdates();
+    }, 30000);
+}
+
+async function checkForUpdates() {
+    try {
+        const response = await fetch('/cashier/check-updates/');
+        const data = await response.json();
+        
+        // If the server reports a different number of ready orders, reload
+        if (data.order_count !== lastOrderCount) {
+            console.log("Change detected in order count, reloading...");
+            window.location.reload();
+        }
+    } catch (err) {
+        console.error("Update check failed:", err);
+    }
+}
+
+function connectWebSocket() {
+    const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+    socket = new WebSocket(protocol + window.location.host + "/ws/notifications/");
+    
+    socket.onopen = () => console.log("✅ Cashier WebSocket connected");
+    
+    socket.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        if (data.type === "order_ready") {
+            showNotification(`New order ready for Table ${data.table}`, 'info');
+            playSound();
+            // Immediate refresh when WebSocket signals a new order
+            setTimeout(() => window.location.reload(), 1500);
+        }
+    };
+    
+    socket.onclose = () => setTimeout(connectWebSocket, 5000);
+}
+
+// --- Payment Logic ---
 function setTip(orderId, amount, subtotal) {
     const tipInput = document.getElementById(`tip-${orderId}`);
     if (tipInput) {
@@ -129,7 +151,6 @@ function setTip(orderId, amount, subtotal) {
 function updateTotal(orderId, subtotal) {
     const tipInput = document.getElementById(`tip-${orderId}`);
     const totalSpan = document.getElementById(`total-${orderId}`);
-    
     if (tipInput && totalSpan) {
         const tip = parseFloat(tipInput.value) || 0;
         const total = subtotal + tip;
@@ -140,13 +161,10 @@ function updateTotal(orderId, subtotal) {
 function toggleProofSection(orderId) {
     const method = document.getElementById(`method-${orderId}`).value;
     const proofSection = document.getElementById(`proof-section-${orderId}`);
-    
-    if (method === 'digital') {
-        proofSection.classList.remove('hidden');
-    } else {
-        proofSection.classList.add('hidden');
-    }
+    method === 'digital' ? proofSection.classList.remove('hidden') : proofSection.classList.add('hidden');
 }
+
+// templates/dashboard/cashier.html - Fix processPayment function
 
 async function processPayment(button, orderId, subtotal) {
     const tip = document.getElementById(`tip-${orderId}`)?.value || 0;
@@ -154,6 +172,7 @@ async function processPayment(button, orderId, subtotal) {
     const proofFile = document.getElementById(`proof-${orderId}`)?.files[0];
     const proofRef = document.getElementById(`proof-ref-${orderId}`)?.value || '';
     
+    // Show loading state
     const originalText = button.innerText;
     button.innerText = '⏳ Processing...';
     button.disabled = true;
@@ -165,10 +184,20 @@ async function processPayment(button, orderId, subtotal) {
     if (proofFile) formData.append('proof_image', proofFile);
     if (proofRef) formData.append('proof_reference', proofRef);
     
+    console.log("Sending payment request:", {
+        order_id: orderId,
+        tip: tip,
+        method: method,
+        has_proof: !!proofFile,
+        has_ref: !!proofRef
+    });
+    
     try {
         const response = await fetch('/payments/create/', {
             method: 'POST',
-            headers: { 'X-CSRFToken': getCSRFToken() },
+            headers: {
+                'X-CSRFToken': getCSRFToken()
+            },
             body: formData
         });
         
@@ -176,33 +205,37 @@ async function processPayment(button, orderId, subtotal) {
         console.log("Payment response:", data);
         
         if (data.status === 'approved') {
-            showNotification(`✅ Payment completed! Total: ${data.amount} ETB`, 'success');
+            showToast(`✅ Payment completed! Total: ${data.amount} ETB`, 'success');
             removeOrderCard(orderId);
         } else if (data.status === 'created') {
             if (method === 'cash') {
+                // Auto-approve cash payments
                 const approveResponse = await fetch(`/payments/${data.payment_id}/approve/`, {
                     method: 'POST',
-                    headers: { 'X-CSRFToken': getCSRFToken() }
+                    headers: {
+                        'X-CSRFToken': getCSRFToken(),
+                        'Content-Type': 'application/json'
+                    }
                 });
                 const approveData = await approveResponse.json();
                 if (approveData.status === 'approved') {
-                    showNotification(`✅ Payment approved! Total: ${data.amount} ETB (Tip: ${data.tip} ETB)`, 'success');
+                    showToast(`✅ Payment approved! Total: ${data.amount} ETB (Tip: ${data.tip} ETB)`, 'success');
                     removeOrderCard(orderId);
                 } else {
-                    showNotification(`⚠️ Payment created but approval failed`, 'error');
+                    showToast(`⚠️ Payment created but approval failed: ${approveData.error}`, 'error');
                 }
             } else {
-                showNotification(`💰 Payment created! Amount: ${data.amount} ETB. Pending approval.`, 'info');
+                showToast(`💰 Payment created! Amount: ${data.amount} ETB. Pending approval.`, 'info');
                 removeOrderCard(orderId);
             }
         } else if (data.status === 'exists') {
-            showNotification(`⚠️ Payment already pending`, 'info');
+            showToast(`⚠️ Payment already pending for this order`, 'info');
         } else {
-            showNotification(`❌ Payment failed: ${data.error || 'Unknown error'}`, 'error');
+            showToast(`❌ Payment failed: ${data.error || 'Unknown error'}`, 'error');
         }
     } catch (err) {
         console.error('Payment error:', err);
-        showNotification('❌ Payment processing error', 'error');
+        showToast('❌ Payment processing error: ' + err.message, 'error');
     } finally {
         button.innerText = originalText;
         button.disabled = false;
@@ -211,102 +244,32 @@ async function processPayment(button, orderId, subtotal) {
 
 function removeOrderCard(orderId) {
     const el = document.getElementById(`order-${orderId}`);
-    if (el) {
-        el.remove();
-        const container = document.getElementById("orders-container");
-        if (container.children.length === 0) {
-            container.innerHTML = '<p class="text-gray-500 col-span-3 text-center py-8">No pending orders ready for payment</p>';
-        }
-    }
+    if (el) el.remove();
 }
 
-function showNotification(message, type = 'info') {
-    const colors = {
-        success: 'bg-green-500',
-        error: 'bg-red-500',
-        info: 'bg-blue-500',
-        warning: 'bg-yellow-500'
-    };
-    
+function showNotification(message, type) {
+    const colors = { success: 'bg-green-500', error: 'bg-red-500', info: 'bg-blue-500' };
     const notification = document.createElement('div');
-    notification.className = `fixed top-4 right-4 ${colors[type]} text-white p-4 rounded shadow-lg z-50 transform transition-all duration-300 translate-x-full max-w-md`;
-    notification.innerHTML = `<p class="font-bold">${message}</p>`;
+    notification.className = `fixed top-4 right-4 ${colors[type]} text-white p-4 rounded shadow-lg z-50`;
+    notification.innerText = message;
     document.body.appendChild(notification);
-    
-    setTimeout(() => notification.classList.remove('translate-x-full'), 100);
-    setTimeout(() => {
-        notification.classList.add('translate-x-full');
-        setTimeout(() => notification.remove(), 300);
-    }, 5000);
+    setTimeout(() => notification.remove(), 4000);
 }
 
 function playSound() {
     const audio = document.getElementById("notif-sound");
-    if (audio) {
-        audio.currentTime = 0;
-        audio.play().catch(e => console.log("Audio play failed:", e));
-    }
+    if (audio) { audio.currentTime = 0; audio.play().catch(() => {}); }
 }
 
 function getCSRFToken() {
-    const cookieValue = document.cookie.split('; ')
-        .find(row => row.startsWith('csrftoken='));
-    return cookieValue ? cookieValue.split('=')[1] : '';
-}
-
-function connectWebSocket() {
-    const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
-    socket = new WebSocket(protocol + window.location.host + "/ws/notifications/");
-    
-    socket.onopen = () => {
-        console.log("✅ Cashier WebSocket connected");
-        reconnectAttempts = 0;
-        heartbeatInterval = setInterval(() => {
-            if (socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({ type: 'ping' }));
-            }
-        }, 30000);
-    };
-    
-    socket.onmessage = (e) => {
-        const data = JSON.parse(e.data);
-        console.log("📨 Cashier received:", data);
-        if (data.type === "order_ready") {
-            showNotification(`New order ready for Table ${data.table}`, 'info');
-            playSound();
-            setTimeout(() => window.location.reload(), 1000);
-        }
-    };
-    
-    socket.onclose = () => {
-        if (heartbeatInterval) clearInterval(heartbeatInterval);
-        if (reconnectAttempts < maxReconnectAttempts) {
-            reconnectAttempts++;
-            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
-            setTimeout(connectWebSocket, delay);
-        }
-    };
+    return document.cookie.split('; ').find(row => row.startsWith('csrftoken='))?.split('=')[1] || '';
 }
 
 document.addEventListener('DOMContentLoaded', function() {
-    console.log("Cashier dashboard loaded");
     connectWebSocket();
-    
-    document.querySelectorAll('[id^="order-"]').forEach(orderDiv => {
-        const orderId = orderDiv.id.split('-')[1];
-        const subtotalText = document.getElementById(`subtotal-${orderId}`)?.innerText;
-        if (subtotalText) {
-            const subtotal = parseFloat(subtotalText) || 0;
-            updateTotal(orderId, subtotal);
-        }
-    });
+    startAutoRefresh();
 });
 </script>
 
-<style>
-.hidden {
-    display: none;
-}
-</style>
-
+<style> .hidden { display: none; } </style>
 {% endblock %}

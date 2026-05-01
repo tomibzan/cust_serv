@@ -29,6 +29,7 @@ urlpatterns = [
     path('', dashboard_router, name='dashboard_router'),
 
     # ✅ OTHER DASHBOARD ROUTES (waiter/, kitchen/, etc.)
+    path('dashboard/', include('dashboard.urls')),
     path('', include('orders.urls')),
     path('', include('dashboard.urls')),
 ]

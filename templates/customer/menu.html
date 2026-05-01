@@ -45,7 +45,7 @@
         <div id="menu-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {% for station, products in products_by_station.items %}
                 {% for product in products %}
-                <div class="product-item bg-white rounded-lg shadow-md p-4" data-station="{{ station }}">
+                <div class="product-item bg-white rounded-lg shadow-md p-4" data-station="{{ station }}" data-price="{{ product.price }}">
                     <div class="flex justify-between items-start">
                         <div>
                             <h3 class="font-bold text-lg">{{ product.name }}</h3>
@@ -120,14 +120,17 @@
         
         $(document).ready(function() {
             loadCart();
+            
+            // ✅ UPDATED: Load order history on page load
             loadOrderHistory();
+            
             startPolling();
 
             if (sessionId) {
                 connectCustomerWebSocket();
             }
             
-            // Background refresh for safety
+            // Background refresh every 10 seconds
             setInterval(loadOrderHistory, 10000);
         });
 
@@ -157,7 +160,7 @@
             };
         }
 
-        // --- Order History ---
+        // --- Order History Functions ---
         async function loadOrderHistory() {
             try {
                 const response = await fetch('/customer/api/order-history/');
@@ -166,15 +169,20 @@
                 if (data.orders && data.orders.length > 0) {
                     displayOrderHistory(data.orders);
                 } else {
-                    $('#order-history').html(`
-                        <div class="text-center text-gray-500 py-8 bg-white rounded-lg shadow border border-dashed">
-                            🍽️ No active orders. Start ordering from the menu!
-                        </div>
-                    `);
+                    showEmptyOrderHistory();
                 }
             } catch (err) {
-                $('#order-history').html(`<div class="text-center text-red-500 py-8">Error loading orders.</div>`);
+                console.error('Error loading order history:', err);
+                $('#order-history').html(`<div class="text-center text-red-500 py-8">Error loading orders. Please refresh.</div>`);
             }
+        }
+
+        function showEmptyOrderHistory() {
+            $('#order-history').html(`
+                <div class="text-center text-gray-500 py-8 bg-white rounded-lg shadow border border-dashed">
+                    🍽️ No active orders. Start ordering from the menu!
+                </div>
+            `);
         }
 
         function displayOrderHistory(orders) {
@@ -227,12 +235,15 @@
             });
         }
         
-        // --- Logic & Cart ---
+        // --- Cart Functions ---
         function updateQuantity(productId, delta) {
             let current = cart[productId] || 0;
             let newQty = current + delta;
-            if (newQty <= 0) delete cart[productId];
-            else cart[productId] = newQty;
+            if (newQty <= 0) {
+                delete cart[productId];
+            } else {
+                cart[productId] = newQty;
+            }
             updateDisplay(productId);
             saveCart();
             updateTotals();
@@ -243,24 +254,33 @@
         }
         
         function updateTotals() {
-            let totalItems = 0; let totalPrice = 0;
+            let totalItems = 0;
+            let totalPrice = 0;
+            
             for (let productId in cart) {
                 const qty = cart[productId];
                 totalItems += qty;
-                const price = parseFloat($(`#qty-${productId}`).closest('.product-item').find('.text-gray-600').text()) || 0;
+                // Get price from data attribute or from DOM
+                const priceEl = $(`#qty-${productId}`).closest('.product-item');
+                const price = parseFloat(priceEl.data('price') || priceEl.find('.text-gray-600').text()) || 0;
                 totalPrice += price * qty;
             }
+            
             $('#total-items, #cart-count').text(totalItems);
             $('#total-price, #cart-total').text(totalPrice.toFixed(2));
         }
         
-        function saveCart() { localStorage.setItem('customer_cart', JSON.stringify(cart)); }
+        function saveCart() {
+            localStorage.setItem('customer_cart', JSON.stringify(cart));
+        }
         
         function loadCart() {
             const saved = localStorage.getItem('customer_cart');
             if (saved) {
                 cart = JSON.parse(saved);
-                for (let productId in cart) updateDisplay(parseInt(productId));
+                for (let productId in cart) {
+                    updateDisplay(parseInt(productId));
+                }
                 updateTotals();
             }
         }
@@ -272,77 +292,166 @@
             } else {
                 for (let productId in cart) {
                     const qty = cart[productId];
-                    const name = $(`#qty-${productId}`).closest('.product-item').find('h3').text();
-                    const price = parseFloat($(`#qty-${productId}`).closest('.product-item').find('.text-gray-600').text()) || 0;
-                    cartItems.append(`<div class="flex justify-between py-2 border-b">
-                        <div><span class="font-medium">${name}</span><span class="text-sm text-gray-500 ml-2">x${qty}</span></div>
-                        <div><span>${(price * qty).toFixed(2)} ETB</span></div>
-                    </div>`);
+                    const productDiv = $(`#qty-${productId}`).closest('.product-item');
+                    const name = productDiv.find('h3').text();
+                    const price = parseFloat(productDiv.data('price') || productDiv.find('.text-gray-600').text()) || 0;
+                    cartItems.append(`
+                        <div class="flex justify-between py-2 border-b">
+                            <div>
+                                <span class="font-medium">${name}</span>
+                                <span class="text-sm text-gray-500 ml-2">x${qty}</span>
+                            </div>
+                            <div>
+                                <span>${(price * qty).toFixed(2)} ETB</span>
+                                <button onclick="removeFromCart(${productId})" class="ml-2 text-red-500 text-sm">✕</button>
+                            </div>
+                        </div>
+                    `);
                 }
             }
             $('#cart-modal').removeClass('hidden');
         }
         
-        function closeCart() { $('#cart-modal').addClass('hidden'); }
+        function removeFromCart(productId) {
+            delete cart[productId];
+            updateDisplay(productId);
+            saveCart();
+            updateTotals();
+            viewCart(); // Refresh cart display
+        }
         
+        function closeCart() {
+            $('#cart-modal').addClass('hidden');
+        }
+        
+        // --- Order Functions ---
         async function placeOrder() {
-            if (Object.keys(cart).length === 0) return;
-            const items = Object.keys(cart).map(id => ({ product_id: parseInt(id), quantity: cart[id] }));
+            if (Object.keys(cart).length === 0) {
+                showNotification('Your cart is empty!', 'error');
+                return;
+            }
+            
+            const items = Object.keys(cart).map(id => ({ 
+                product_id: parseInt(id), 
+                quantity: cart[id] 
+            }));
+            
             try {
                 const response = await fetch('/customer/api/place-order/', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCSRFToken() },
+                    headers: { 
+                        'Content-Type': 'application/json', 
+                        'X-CSRFToken': getCSRFToken() 
+                    },
                     body: JSON.stringify({ items: items })
                 });
+                
                 const data = await response.json();
+                
                 if (data.status === 'success') {
-                    showNotification('Order placed!', 'success');
+                    showNotification(data.message || 'Order placed!', 'success');
+                    // Clear cart
+                    cart = {};
+                    saveCart();
+                    updateTotals();
+                    closeCart();
+                    // Reset quantity displays
                     $('.product-item span[id^="qty-"]').text('0');
-                    cart = {}; saveCart(); updateTotals(); closeCart(); loadOrderHistory();
+                    // Reload order history
+                    loadOrderHistory();
+                } else {
+                    showNotification(data.error || 'Error placing order', 'error');
                 }
-            } catch (err) { showNotification('Error placing order', 'error'); }
+            } catch (err) {
+                console.error('Place order error:', err);
+                showNotification('Error placing order. Please try again.', 'error');
+            }
         }
         
+        // --- Waiter Call ---
         async function callWaiter() {
-            const message = prompt('Assistance needed?', 'Service needed at table');
+            const message = prompt('What do you need assistance with?', 'Service needed at table');
             if (!message) return;
+            
             try {
                 const response = await fetch('/customer/api/call-waiter/', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCSRFToken() },
+                    headers: { 
+                        'Content-Type': 'application/json', 
+                        'X-CSRFToken': getCSRFToken() 
+                    },
                     body: JSON.stringify({ message: message })
                 });
-                if ((await response.json()).status === 'success') showNotification('Waiter notified!', 'success');
-            } catch (err) { console.error(err); }
+                
+                const data = await response.json();
+                if (data.status === 'success') {
+                    showNotification('Waiter notified! They will be with you shortly.', 'success');
+                } else {
+                    showNotification('Error notifying waiter', 'error');
+                }
+            } catch (err) {
+                console.error(err);
+                showNotification('Network error. Please try again.', 'error');
+            }
         }
 
+        // --- Filter Functions ---
         function filterByStation(station) {
             $('.station-filter').removeClass('bg-blue-600 text-white').addClass('bg-gray-200 text-gray-700');
             $(event.target).removeClass('bg-gray-200 text-gray-700').addClass('bg-blue-600 text-white');
-            if (station === 'all') $('.product-item').show();
-            else { $('.product-item').hide(); $(`.product-item[data-station="${station}"]`).show(); }
+            
+            if (station === 'all') {
+                $('.product-item').show();
+            } else {
+                $('.product-item').hide();
+                $(`.product-item[data-station="${station}"]`).show();
+            }
         }
         
+        // --- Polling for service requests ---
         function startPolling() {
             setInterval(async () => {
                 try {
                     const response = await fetch('/customer/api/service-status/');
                     const data = await response.json();
-                    if (data.has_request && data.status === 'resolved') showNotification('Waiter responded!', 'success');
-                } catch (err) {}
+                    if (data.has_request && data.status === 'resolved') {
+                        showNotification('✅ Waiter has responded to your request!', 'success');
+                    }
+                } catch (err) {
+                    // Silent fail for polling
+                }
             }, 10000);
         }
         
+        // --- UI Helpers ---
         function showNotification(message, type) {
-            const colors = { success: 'bg-green-500', error: 'bg-red-500', info: 'bg-blue-500' };
-            const notification = $(`<div class="${colors[type]} text-white px-4 py-2 rounded shadow-lg mb-2 animate-fade-in">${message}</div>`);
+            const colors = { 
+                success: 'bg-green-500', 
+                error: 'bg-red-500', 
+                info: 'bg-blue-500' 
+            };
+            
+            const notification = $(`
+                <div class="${colors[type] || 'bg-blue-500'} text-white px-4 py-2 rounded shadow-lg mb-2 animate-fade-in">
+                    ${message}
+                </div>
+            `);
+            
             $('#notification-area').append(notification);
-            setTimeout(() => { notification.fadeOut(300, function() { $(this).remove(); }); }, 5000);
+            
+            setTimeout(() => {
+                notification.fadeOut(300, function() { 
+                    $(this).remove(); 
+                });
+            }, 5000);
         }
         
         function playSound() {
             const audio = document.getElementById("notif-sound");
-            if (audio) { audio.currentTime = 0; audio.play().catch(e => {}); }
+            if (audio) {
+                audio.currentTime = 0;
+                audio.play().catch(e => {});
+            }
         }
         
         function getCSRFToken() {
@@ -351,9 +460,23 @@
     </script>
 
     <style>
-        @keyframes fadeIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
-        .animate-fade-in { animation: fadeIn 0.3s ease-out; }
-        .station-filter { transition: all 0.2s; }
+        @keyframes fadeIn { 
+            from { opacity: 0; transform: translateX(20px); } 
+            to { opacity: 1; transform: translateX(0); } 
+        }
+        .animate-fade-in { 
+            animation: fadeIn 0.3s ease-out; 
+        }
+        .station-filter { 
+            transition: all 0.2s; 
+            cursor: pointer;
+        }
+        .product-item {
+            transition: transform 0.2s;
+        }
+        .product-item:hover {
+            transform: translateY(-2px);
+        }
     </style>
 </body>
 </html>

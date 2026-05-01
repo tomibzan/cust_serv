@@ -5,6 +5,8 @@ class User(AbstractUser):
     ROLE_CHOICES = (
         ('waiter', 'Waiter'),
         ('kitchen', 'Kitchen Staff'),
+         ('bar', 'Bar Staff'),
+        ('cafe', 'Cafe Staff'), 
         ('cashier', 'Cashier'),
         ('manager', 'Manager'),
     )

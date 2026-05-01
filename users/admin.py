@@ -6,16 +6,16 @@ from .models import User, Client
 class CustomUserAdmin(UserAdmin):
     model = User
 
-    list_display = ('username', 'email', 'role', 'is_staff')
-    list_filter = ('role', 'is_staff')
+    list_display = ('username', 'email', 'role', 'tip_balance', 'is_staff')
+    list_filter = ('role', 'is_staff', 'is_active')
     search_fields = ('username', 'email')
 
     fieldsets = UserAdmin.fieldsets + (
-        ('Additional Info', {'fields': ('role', 'tip_balance')}),
+        ('Restaurant Info', {'fields': ('role', 'tip_balance')}),
     )
-
+    
     add_fieldsets = UserAdmin.add_fieldsets + (
-        ('Additional Info', {'fields': ('role', 'tip_balance')}),
+        ('Restaurant Info', {'fields': ('role', 'tip_balance')}),
     )
 
 admin.site.register(User, CustomUserAdmin)
