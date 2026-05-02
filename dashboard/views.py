@@ -18,8 +18,11 @@ from users.models import User, Client
 from django.utils import timezone
 from datetime import date
 from django.db.models import Q
+from orders.session_utils import waiter_clear_table
 
 # dashboard/views.py - Fix waiter_dashboard
+
+# dashboard/views.py - Update waiter_dashboard
 
 @login_required
 def waiter_dashboard(request):
@@ -39,25 +42,55 @@ def waiter_dashboard(request):
     table_session_ids = []
     
     if current_shift:
+        # Get all assigned tables for this shift
         assigned_tables = TableAssignment.objects.filter(
             shift=current_shift,
             is_active=True
-        ).values_list('table', flat=True)
-        
-        sessions = ActiveTableSession.objects.filter(
-            table_id__in=assigned_tables,
-            is_active=True
         ).select_related('table')
         
-        active_session_ids = list(sessions.values_list('id', flat=True))
-        
-        # Get legacy session IDs for the same tables
-        table_session_ids = TableSession.objects.filter(
-            table_id__in=assigned_tables,
-            is_active=True
-        ).values_list('id', flat=True)
+        # For each assigned table, get or create an active session
+        for assignment in assigned_tables:
+            # Try to get existing active session
+            session = ActiveTableSession.objects.filter(
+                table=assignment.table,
+                is_active=True
+            ).first()
+            
+            if not session:
+                # Create active session for this table
+                session = ActiveTableSession.objects.create(
+                    table=assignment.table,
+                    waiter=request.user,
+                    current_assignment=assignment,
+                    is_active=True,
+                    started_at=timezone.now()
+                )
+                print(f"✅ Auto-created session for Table {assignment.table.number}")
+            
+            # Ensure the session has the correct waiter
+            if session.waiter != request.user:
+                session.waiter = request.user
+                session.current_assignment = assignment
+                session.save()
+            
+            sessions.append(session)
+            active_session_ids.append(session.id)
+            
+            # Also create legacy session for backward compatibility
+            legacy_session, _ = TableSession.objects.get_or_create(
+                id=session.id,
+                defaults={
+                    'table': assignment.table,
+                    'assigned_employee': request.user,
+                    'is_active': True,
+                    'started_at': session.started_at
+                }
+            )
+            table_session_ids.append(legacy_session.id)
+    else:
+        messages.warning(request, "You don't have an active shift for today. Please contact the manager.")
     
-    # Get pending orders from BOTH session types
+    # Get pending orders
     pending_by_active = Order.objects.filter(
         status='needs_confirmation',
         active_session__waiter=request.user
@@ -73,7 +106,6 @@ def waiter_dashboard(request):
         active_session_id__in=active_session_ids
     )
     
-    # Combine all pending orders
     pending_confirmation = (pending_by_active | pending_by_legacy | pending_by_session_id).distinct().order_by('-created_at')
     
     # Regular orders
@@ -97,11 +129,11 @@ def waiter_dashboard(request):
     print(f"\n{'='*50}")
     print(f"WAITER DASHBOARD - {request.user.username}")
     print(f"Active shift: {current_shift.id if current_shift else 'None'}")
-    print(f"Sessions: {len(sessions)}")
+    print(f"Assigned tables: {[a.table.number for a in assigned_tables] if current_shift else 'None'}")
+    print(f"Active sessions: {len(sessions)}")
+    for s in sessions:
+        print(f"  - Table {s.table.number}: Session {s.id}, Active: {s.is_active}")
     print(f"Pending orders found: {pending_confirmation.count()}")
-    for order in pending_confirmation:
-        table_num = order.active_session.table.number if order.active_session else (order.session.table.number if order.session else '?')
-        print(f"  ⏳ Order #{order.id} - Table {table_num} - Status: {order.status}")
     print(f"{'='*50}\n")
     
     context = {
@@ -114,7 +146,6 @@ def waiter_dashboard(request):
     }
     
     return render(request, "dashboard/waiter.html", context)
-
 def _station_dashboard(request, station_type):
     # Only show items that are pending, preparing, or recently ready (last 30 minutes)
     recent_cutoff = timezone.now() - timedelta(minutes=30)
@@ -372,6 +403,8 @@ def manage_shifts(request):
     return render(request, 'dashboard/manage_shifts.html', context)
 
 
+# dashboard/views.py - Update create_shift
+
 @staff_member_required
 @csrf_exempt
 def create_shift(request):
@@ -424,31 +457,47 @@ def create_shift(request):
                     is_active=True
                 )
                 
-                # Assign tables
+                # Assign tables and create active sessions
                 assigned_count = 0
+                session_count = 0
+                
                 for table_id in table_ids:
                     table = Table.objects.get(id=table_id)
-                    TableAssignment.objects.create(
+                    
+                    # Create table assignment
+                    assignment = TableAssignment.objects.create(
                         shift=shift,
                         table=table,
                         is_active=True
                     )
+                    assigned_count += 1
                     
-                    # Create or update active session for this table
-                    ActiveTableSession.objects.update_or_create(
+                    # CRITICAL: Create ActiveTableSession for this table immediately
+                    session, created = ActiveTableSession.objects.get_or_create(
                         table=table,
                         is_active=True,
                         defaults={
                             'waiter_id': employee_id,
-                            'current_assignment': shift.table_assignments.first(),
-                            'started_at': timezone.now()
+                            'current_assignment': assignment,
+                            'started_at': timezone.now(),
+                            'is_active': True
                         }
                     )
-                    assigned_count += 1
+                    
+                    if created:
+                        session_count += 1
+                        print(f"✅ Created active session for Table {table.number}")
+                    else:
+                        # Update existing session
+                        session.waiter_id = employee_id
+                        session.current_assignment = assignment
+                        session.is_active = True
+                        session.save()
+                        print(f"✅ Updated active session for Table {table.number}")
                 
                 messages.success(
                     request, 
-                    f"✅ Shift created for {shift.employee.username} on {shift_date} with {assigned_count} tables assigned"
+                    f"✅ Shift created for {shift.employee.username} on {shift_date} with {assigned_count} tables assigned and {session_count} active sessions created"
                 )
                 
         except Exception as e:
@@ -506,6 +555,89 @@ def get_waiter_tables(request):
         'has_shift': True,
         'shift_id': current_shift.id,
         'shift_type': current_shift.shift_type
+    })
+
+@login_required
+@csrf_exempt
+def waiter_clear_table(request, session_id):
+    """Waiter manually clears a table session"""
+    
+    from orders.models import ActiveTableSession
+    
+    session = get_object_or_404(ActiveTableSession, id=session_id)
+    
+    # Verify waiter is authorized
+    waiter_authorized = False
+    if session.waiter == request.user:
+        waiter_authorized = True
+    else:
+        # Check shift assignment
+        from datetime import date
+        from orders.models import WorkShift
+        today = date.today()
+        has_shift = WorkShift.objects.filter(
+            employee=request.user,
+            shift_date=today,
+            is_active=True,
+            table_assignments__table=session.table
+        ).exists()
+        if has_shift:
+            waiter_authorized = True
+    
+    if not waiter_authorized:
+        return JsonResponse({'error': 'Not authorized'}, status=403)
+    
+    # Check if there are pending orders
+    if session.has_pending_orders():
+        return JsonResponse({'error': 'Cannot clear table: pending orders exist'}, status=400)
+    
+    session.close_session(closed_by=request.user.username)
+    
+    # Also update any active customer session if exists
+    if request.session.get('session_id') == session.id:
+        request.session.flush()
+    
+    return JsonResponse({'status': 'success', 'message': f'Table {session.table.number} cleared'})
+
+@login_required
+@csrf_exempt
+def refresh_waiter_sessions(request):
+    """Manually refresh waiter's table sessions"""
+    
+    today = date.today()
+    current_shift = WorkShift.objects.filter(
+        employee=request.user,
+        shift_date=today,
+        is_active=True
+    ).first()
+    
+    if not current_shift:
+        return JsonResponse({'error': 'No active shift'}, status=400)
+    
+    # Get all assigned tables
+    assignments = TableAssignment.objects.filter(
+        shift=current_shift,
+        is_active=True
+    ).select_related('table')
+    
+    created_count = 0
+    for assignment in assignments:
+        session, created = ActiveTableSession.objects.update_or_create(
+            table=assignment.table,
+            is_active=True,
+            defaults={
+                'waiter': request.user,
+                'current_assignment': assignment,
+                'started_at': timezone.now()
+            }
+        )
+        if created:
+            created_count += 1
+    
+    return JsonResponse({
+        'status': 'success',
+        'created': created_count,
+        'total': assignments.count()
     })
 
 @login_required

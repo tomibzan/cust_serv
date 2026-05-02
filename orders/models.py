@@ -80,13 +80,17 @@ class TableAssignment(models.Model):
 
 
 class ActiveTableSession(models.Model):
-    """Current active sessions for tables"""
-    table = models.ForeignKey(Table, on_delete=models.CASCADE)
+    table = models.ForeignKey('Table', on_delete=models.CASCADE)
     current_assignment = models.ForeignKey(TableAssignment, on_delete=models.SET_NULL, null=True)
-    waiter = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='active_tables')
+    waiter = models.ForeignKey('users.User', on_delete=models.SET_NULL, null=True, related_name='active_tables')
     
     started_at = models.DateTimeField(auto_now_add=True)
     ended_at = models.DateTimeField(null=True, blank=True)
+    
+    # Session expiry tracking
+    payment_completed_at = models.DateTimeField(null=True, blank=True)
+    last_activity_at = models.DateTimeField(auto_now=True)
+    is_paid = models.BooleanField(default=False)
     
     # Customer info (if identified)
     client = models.ForeignKey('users.Client', on_delete=models.SET_NULL, null=True, blank=True)
@@ -94,19 +98,51 @@ class ActiveTableSession(models.Model):
     
     is_active = models.BooleanField(default=True)
     
+    GRACE_PERIOD_MINUTES = 10
+    
     def __str__(self):
         waiter_name = self.waiter.username if self.waiter else "Unassigned"
-        return f"Table {self.table.number} - Waiter: {waiter_name}"
+        status = "Active" if self.is_active else "Closed"
+        return f"Table {self.table.number} - Waiter: {waiter_name} ({status})"
     
-    def close_session(self):
+    def can_be_auto_closed(self):
+        """Check if session can be auto-closed after grace period"""
+        if not self.is_paid:
+            return False
+        if not self.payment_completed_at:
+            return False
+        
+        grace_period_end = self.payment_completed_at + timedelta(minutes=self.GRACE_PERIOD_MINUTES)
+        return timezone.now() > grace_period_end
+    
+    def close_session(self, closed_by=None):
         """Close the current session"""
         self.is_active = False
         self.ended_at = timezone.now()
         self.save()
+        
+        # Log session closure
+        print(f"Session {self.id} for Table {self.table.number} closed by {closed_by or 'system'}")
     
     def get_orders(self):
         """Get all orders for this session"""
         return Order.objects.filter(active_session=self)
+    
+    def has_pending_orders(self):
+        """Check if there are unpaid/unserved orders"""
+        return self.get_orders().exclude(status='paid').exists()
+    
+    def mark_payment_completed(self):
+        """Mark session as paid and set payment timestamp"""
+        self.is_paid = True
+        self.payment_completed_at = timezone.now()
+        self.last_activity_at = timezone.now()
+        self.save()
+    
+    def update_activity(self):
+        """Update last activity timestamp"""
+        self.last_activity_at = timezone.now()
+        self.save(update_fields=['last_activity_at'])
 
 
 class Order(models.Model):

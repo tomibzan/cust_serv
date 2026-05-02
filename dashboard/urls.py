@@ -13,6 +13,7 @@ from .views import (
     create_shift,
     end_shift,
     get_waiter_tables,
+    waiter_clear_table
 )
 from orders.views import create_order  # ← Import from orders.views, NOT dashboard.views
 
@@ -29,4 +30,5 @@ urlpatterns = [
     path('create-shift/', create_shift, name='create_shift'),
     path('end-shift/<int:shift_id>/', end_shift, name='end_shift'),
     path('api/waiter-tables/', get_waiter_tables, name='get_waiter_tables'),
+    path('waiter/clear-table/<int:session_id>/', waiter_clear_table, name='waiter_clear_table'),
 ]

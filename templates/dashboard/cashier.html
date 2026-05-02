@@ -1,156 +1,337 @@
-<!-- templates/dashboard/cashier.html -->
+<!-- templates/dashboard/cashier.html - Complete with Payment History -->
 {% extends "base.html" %}
 
 {% block content %}
 
-<h2 class="text-2xl font-bold mb-6">💰 Cashier Dashboard</h2>
-
-<div id="orders-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-    {% for order_item in orders %}
-    <div id="order-{{ order_item.order.id }}" class="bg-white p-4 rounded shadow border-l-4 border-green-500">
-        <div class="flex justify-between items-start mb-3">
-            <div>
-                <h3 class="font-bold text-lg">Table {{ order_item.order.session.table.number }}</h3>
-                <p class="text-sm text-gray-500">Order #{{ order_item.order.id }}</p>
-                <p class="text-xs text-gray-400">
-                    Waiter: 
-                    {% if order_item.order.session.assigned_employee %}
-                        {{ order_item.order.session.assigned_employee.get_full_name|default:order_item.order.session.assigned_employee.username }}
-                    {% else %}
-                        Not assigned
-                    {% endif %}
-                </p>
-            </div>
-            <span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">{{ order_item.order.status|title }}</span>
-        </div>
-        
-        <!-- Items List -->
-        <div class="border-t border-b py-3 my-3 max-h-48 overflow-y-auto">
-            {% for item in order_item.items %}
-            <div class="flex justify-between py-1 text-sm">
-                <span>{{ item.product.name }} x{{ item.quantity }}</span>
-                <span>{{ item.price_at_time }} ETB</span>
-            </div>
-            {% endfor %}
-        </div>
-        
-        <!-- Subtotal -->
-        <div class="flex justify-between font-semibold mb-2">
-            <span>Subtotal:</span>
-            <span id="subtotal-{{ order_item.order.id }}">{{ order_item.subtotal }} ETB</span>
-        </div>
-        
-        <!-- Tip Input -->
-        <div class="mb-3">
-            <label class="block text-sm font-medium text-gray-700 mb-1">💝 Optional Tip</label>
-            <div class="flex gap-2">
-                <input type="number" id="tip-{{ order_item.order.id }}" 
-                       class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 sm:text-sm"
-                       placeholder="0.00" step="0.01" min="0" value="0"
-                       onchange="updateTotal({{ order_item.order.id }}, {{ order_item.subtotal }})">
-                <div class="flex gap-1">
-                    <button type="button" onclick="setTip({{ order_item.order.id }}, 10, {{ order_item.subtotal }})" class="px-2 py-1 text-sm bg-gray-100 rounded">10</button>
-                    <button type="button" onclick="setTip({{ order_item.order.id }}, 20, {{ order_item.subtotal }})" class="px-2 py-1 text-sm bg-gray-100 rounded">20</button>
-                    <button type="button" onclick="setTip({{ order_item.order.id }}, 50, {{ order_item.subtotal }})" class="px-2 py-1 text-sm bg-gray-100 rounded">50</button>
-                    <button type="button" onclick="setTip({{ order_item.order.id }}, 100, {{ order_item.subtotal }})" class="px-2 py-1 text-sm bg-gray-100 rounded">100</button>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Total -->
-        <div class="flex justify-between font-bold text-lg mb-3 pt-2 border-t">
-            <span>Total:</span>
-            <span id="total-{{ order_item.order.id }}">{{ order_item.subtotal }} ETB</span>
-        </div>
-        
-        <!-- Payment Method -->
-        <div class="mb-3">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Method</label>
-            <select id="method-{{ order_item.order.id }}" 
-                    class="w-full rounded-md border-gray-300 shadow-sm"
-                    onchange="toggleProofSection({{ order_item.order.id }})">
-                <option value="cash">💵 Cash</option>
-                <option value="pos">💳 POS Card</option>
-                <option value="digital">📱 Digital Payment</option>
-            </select>
-        </div>
-        
-        <div id="proof-section-{{ order_item.order.id }}" class="mb-3 hidden">
-            <input type="file" id="proof-{{ order_item.order.id }}" accept="image/*" class="block w-full text-sm">
-            <input type="text" id="proof-ref-{{ order_item.order.id }}" placeholder="Ref #" class="mt-2 w-full rounded-md border-gray-300 shadow-sm text-sm">
-        </div>
-        
-        <button onclick="processPayment(this, {{ order_item.order.id }}, {{ order_item.subtotal }})"
-                class="w-full bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition font-semibold">
-            💰 Process Payment
-        </button>
+<div class="container mx-auto px-4 py-6">
+    <h2 class="text-2xl font-bold mb-6">💰 Cashier Dashboard</h2>
+    
+    <!-- Tabs -->
+    <div class="border-b border-gray-200 mb-6">
+        <nav class="flex space-x-8">
+            <button onclick="showTab('pending')" id="tab-pending" 
+                    class="py-2 px-1 border-b-2 border-green-500 text-green-600 font-medium">
+                Pending Payments
+            </button>
+            <button onclick="showTab('history')" id="tab-history" 
+                    class="py-2 px-1 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+                Payment History
+            </button>
+        </nav>
     </div>
-    {% empty %}
-    <p class="text-gray-500 col-span-3 text-center py-8">No pending orders ready for payment</p>
-    {% endfor %}
+    
+    <!-- Summary Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+        <div class="bg-blue-100 rounded-lg p-4 text-center">
+            <p class="text-2xl font-bold" id="pending-count">{{ orders|length }}</p>
+            <p class="text-sm text-gray-600">Pending Payments</p>
+        </div>
+        <div class="bg-green-100 rounded-lg p-4 text-center">
+            <p class="text-2xl font-bold" id="today-total">0</p>
+            <p class="text-sm text-gray-600">Today's Total</p>
+        </div>
+        <div class="bg-yellow-100 rounded-lg p-4 text-center">
+            <p class="text-2xl font-bold" id="today-tips">0</p>
+            <p class="text-sm text-gray-600">Today's Tips</p>
+        </div>
+        <div class="bg-purple-100 rounded-lg p-4 text-center">
+            <p class="text-2xl font-bold" id="history-count">0</p>
+            <p class="text-sm text-gray-600">Today's Payments</p>
+        </div>
+        <div class="bg-orange-100 rounded-lg p-4 text-center">
+            <p class="text-2xl font-bold" id="history-total">0</p>
+            <p class="text-sm text-gray-600">Today's Revenue</p>
+        </div>
+    </div>
+    
+    <!-- Pending Payments Tab -->
+    <div id="pending-tab" class="tab-content">
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Order ID</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Table</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Waiter</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Items</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Subtotal</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tip</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Method</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="orders-table-body" class="bg-white divide-y divide-gray-200">
+                        {% for order_data in orders %}
+                        <tr id="order-row-{{ order_data.order.id }}" class="hover:bg-gray-50">
+                            <td class="px-4 py-3 text-sm font-medium text-gray-900">{{ order_data.order.id }}</td>
+                            <td class="px-4 py-3 text-sm text-gray-600">{{ order_data.table_number }}</td>
+                            <td class="px-4 py-3 text-sm text-gray-600">
+                                {% if order_data.order.active_session %}
+                                    {{ order_data.order.active_session.waiter.username|default:"N/A" }}
+                                {% elif order_data.order.session %}
+                                    {{ order_data.order.session.assigned_employee.username|default:"N/A" }}
+                                {% else %}
+                                    N/A
+                                {% endif %}
+                            </td>
+                            <td class="px-4 py-3 text-sm text-gray-600">
+                                {% if order_data.order.active_session and order_data.order.active_session.client %}
+                                    {{ order_data.order.active_session.client.phone|default:"-" }}
+                                {% elif order_data.order.session and order_data.order.session.client %}
+                                    {{ order_data.order.session.client.phone|default:"-" }}
+                                {% else %}
+                                    Walk-in
+                                {% endif %}
+                            </td>
+                            <td class="px-4 py-3 text-sm text-gray-600">
+                                <button onclick="showItems({{ order_data.order.id }})" class="text-blue-600 hover:text-blue-800">
+                                    {{ order_data.items|length }} items
+                                </button>
+                            </td>
+                            <td class="px-4 py-3 text-sm text-gray-600" id="subtotal-{{ order_data.order.id }}">
+                                {{ order_data.subtotal }} ETB
+                            </td>
+                            <td class="px-4 py-3">
+                                <input type="number" id="tip-{{ order_data.order.id }}" 
+                                       value="0" step="1" min="0"
+                                       class="w-20 px-2 py-1 border rounded text-sm"
+                                       onchange="updateTotal({{ order_data.order.id }}, {{ order_data.subtotal }})">
+                            </td>
+                            <td class="px-4 py-3 text-sm font-semibold" id="total-{{ order_data.order.id }}">
+                                {{ order_data.subtotal }} ETB
+                            </td>
+                            <td class="px-4 py-3">
+                                <select id="method-{{ order_data.order.id }}" 
+                                        class="px-2 py-1 border rounded text-sm"
+                                        onchange="toggleProofSection({{ order_data.order.id }})">
+                                    <option value="cash">💵 Cash</option>
+                                    <option value="pos">💳 POS Card</option>
+                                    <option value="digital">📱 Digital</option>
+                                </select>
+                            </td>
+                            <td class="px-4 py-3">
+                                <div class="flex gap-2">
+                                    <button onclick="processPayment({{ order_data.order.id }}, {{ order_data.subtotal }})"
+                                            class="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700">
+                                        Pay
+                                    </button>
+                                    <button onclick="viewDetails({{ order_data.order.id }})"
+                                            class="bg-gray-500 text-white px-3 py-1 rounded text-sm hover:bg-gray-600">
+                                        Details
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        <tr id="proof-row-{{ order_data.order.id }}" class="hidden bg-gray-50">
+                            <td colspan="10" class="px-4 py-3">
+                                <div class="flex items-center gap-4">
+                                    <span class="text-sm font-medium">Payment Proof:</span>
+                                    <input type="file" id="proof-{{ order_data.order.id }}" 
+                                           accept="image/*" class="text-sm">
+                                    <input type="text" id="proof-ref-{{ order_data.order.id }}" 
+                                           placeholder="Transaction Reference" 
+                                           class="px-2 py-1 border rounded text-sm w-64">
+                                    <span class="text-xs text-gray-500">Required for digital payments</span>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="10" class="px-4 py-8 text-center text-gray-500">
+                                No pending payments at this time
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Payment History Tab -->
+    <div id="history-tab" class="tab-content hidden">
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Order ID</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Table</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Waiter</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Items</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Subtotal</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tip</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Method</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cashier</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-table-body" class="bg-white divide-y divide-gray-200">
+                        <tr>
+                            <td colspan="11" class="px-4 py-8 text-center text-gray-500">
+                                Loading payment history...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- History Filters -->
+        <div class="mt-4 flex gap-4 justify-end">
+            <select id="history-filter" onchange="loadPaymentHistory()" class="px-3 py-1 border rounded text-sm">
+                <option value="today">Today</option>
+                <option value="yesterday">Yesterday</option>
+                <option value="week">Last 7 Days</option>
+                <option value="month">This Month</option>
+                <option value="all">All Time</option>
+            </select>
+            <button onclick="exportPaymentHistory()" class="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600">
+                📥 Export CSV
+            </button>
+            <button onclick="printReport()" class="bg-gray-500 text-white px-3 py-1 rounded text-sm hover:bg-gray-600">
+                🖨️ Print Report
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Items Modal -->
+<div id="items-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+    <div class="bg-white rounded-lg max-w-md w-full mx-4">
+        <div class="flex justify-between items-center p-4 border-b">
+            <h3 class="text-lg font-bold">Order Items</h3>
+            <button onclick="closeModal()" class="text-gray-500 hover:text-gray-700">✕</button>
+        </div>
+        <div id="modal-items" class="p-4 max-h-96 overflow-y-auto"></div>
+        <div class="p-4 border-t">
+            <button onclick="closeModal()" class="w-full bg-gray-500 text-white py-2 rounded">Close</button>
+        </div>
+    </div>
 </div>
 
 <audio id="notif-sound" src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"></audio>
 
 <script>
+let currentOrderItems = {};
 let socket;
-let lastOrderCount = {{ orders|length }};
-let refreshInterval;
 
-// --- Auto-Refresh Logic ---
-function startAutoRefresh() {
-    // Check for updates every 30 seconds as a fallback to WebSockets
-    refreshInterval = setInterval(() => {
-        checkForUpdates();
-    }, 30000);
+// ==================== Tab Navigation ====================
+function showTab(tab) {
+    const pendingTab = document.getElementById('pending-tab');
+    const historyTab = document.getElementById('history-tab');
+    const tabPending = document.getElementById('tab-pending');
+    const tabHistory = document.getElementById('tab-history');
+    
+    if (tab === 'pending') {
+        pendingTab.classList.remove('hidden');
+        historyTab.classList.add('hidden');
+        tabPending.classList.add('border-green-500', 'text-green-600');
+        tabPending.classList.remove('border-transparent', 'text-gray-500');
+        tabHistory.classList.remove('border-green-500', 'text-green-600');
+        tabHistory.classList.add('border-transparent', 'text-gray-500');
+    } else {
+        pendingTab.classList.add('hidden');
+        historyTab.classList.remove('hidden');
+        tabHistory.classList.add('border-green-500', 'text-green-600');
+        tabHistory.classList.remove('border-transparent', 'text-gray-500');
+        tabPending.classList.remove('border-green-500', 'text-green-600');
+        tabPending.classList.add('border-transparent', 'text-gray-500');
+        loadPaymentHistory();
+    }
 }
 
-async function checkForUpdates() {
+// ==================== Payment History ====================
+async function loadPaymentHistory() {
+    const filter = document.getElementById('history-filter')?.value || 'today';
+    
     try {
-        const response = await fetch('/cashier/check-updates/');
+        const response = await fetch(`/payments/history/?filter=${filter}`);
         const data = await response.json();
         
-        // If the server reports a different number of ready orders, reload
-        if (data.order_count !== lastOrderCount) {
-            console.log("Change detected in order count, reloading...");
-            window.location.reload();
+        const tbody = document.getElementById('history-table-body');
+        
+        if (data.payments && data.payments.length > 0) {
+            tbody.innerHTML = data.payments.map(payment => `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-3 text-sm text-gray-600">${new Date(payment.created_at).toLocaleString()}</td>
+                    <td class="px-4 py-3 text-sm font-medium text-gray-900">${payment.order_id}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600">${payment.table_number}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600">${payment.waiter_name || 'N/A'}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600">
+                        <button onclick="showHistoryItems(${payment.order_id})" class="text-blue-600 hover:text-blue-800">
+                            ${payment.item_count} items
+                        </button>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-600">${payment.subtotal} ETB</td>
+                    <td class="px-4 py-3 text-sm text-green-600 font-medium">${payment.tip} ETB</td>
+                    <td class="px-4 py-3 text-sm font-bold">${payment.total} ETB</td>
+                    <td class="px-4 py-3 text-sm text-gray-600">${payment.method}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600">${payment.cashier_name}</td>
+                    <td class="px-4 py-3">
+                        <span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">${payment.status}</span>
+                    </td>
+                </tr>
+            `).join('');
+            
+            // Update summary
+            document.getElementById('history-count').innerText = data.summary.count;
+            document.getElementById('history-total').innerText = data.summary.total.toFixed(2);
+        } else {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="11" class="px-4 py-8 text-center text-gray-500">
+                        No payment records found for this period
+                    </td>
+                </tr>
+            `;
         }
     } catch (err) {
-        console.error("Update check failed:", err);
+        console.error('Error loading payment history:', err);
     }
 }
 
-function connectWebSocket() {
-    const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
-    socket = new WebSocket(protocol + window.location.host + "/ws/notifications/");
-    
-    socket.onopen = () => console.log("✅ Cashier WebSocket connected");
-    
-    socket.onmessage = (e) => {
-        const data = JSON.parse(e.data);
-        if (data.type === "order_ready") {
-            showNotification(`New order ready for Table ${data.table}`, 'info');
-            playSound();
-            // Immediate refresh when WebSocket signals a new order
-            setTimeout(() => window.location.reload(), 1500);
-        }
-    };
-    
-    socket.onclose = () => setTimeout(connectWebSocket, 5000);
+async function exportPaymentHistory() {
+    const filter = document.getElementById('history-filter')?.value || 'today';
+    window.location.href = `/payments/export/?filter=${filter}`;
 }
 
-// --- Payment Logic ---
-function setTip(orderId, amount, subtotal) {
-    const tipInput = document.getElementById(`tip-${orderId}`);
-    if (tipInput) {
-        tipInput.value = amount;
-        updateTotal(orderId, subtotal);
-    }
+function printReport() {
+    window.print();
 }
 
+function showHistoryItems(orderId) {
+    // Fetch and show items for history order
+    fetch(`/order/${orderId}/details/`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'ok') {
+                const modal = document.getElementById('items-modal');
+                const container = document.getElementById('modal-items');
+                
+                container.innerHTML = data.order.items.map(item => `
+                    <div class="flex justify-between py-2 border-b">
+                        <span>${item.quantity}x ${item.product}</span>
+                        <span>${(item.price * item.quantity).toFixed(2)} ETB</span>
+                    </div>
+                `).join('');
+                
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+            }
+        });
+}
+
+// ==================== UI Functions ====================
 function updateTotal(orderId, subtotal) {
     const tipInput = document.getElementById(`tip-${orderId}`);
     const totalSpan = document.getElementById(`total-${orderId}`);
+    
     if (tipInput && totalSpan) {
         const tip = parseFloat(tipInput.value) || 0;
         const total = subtotal + tip;
@@ -160,21 +341,60 @@ function updateTotal(orderId, subtotal) {
 
 function toggleProofSection(orderId) {
     const method = document.getElementById(`method-${orderId}`).value;
-    const proofSection = document.getElementById(`proof-section-${orderId}`);
-    method === 'digital' ? proofSection.classList.remove('hidden') : proofSection.classList.add('hidden');
+    const proofRow = document.getElementById(`proof-row-${orderId}`);
+    
+    if (proofRow) {
+        if (method === 'digital') {
+            proofRow.classList.remove('hidden');
+        } else {
+            proofRow.classList.add('hidden');
+        }
+    }
 }
 
-// templates/dashboard/cashier.html - Fix processPayment function
+function showItems(orderId) {
+    const items = currentOrderItems[orderId];
+    if (items) {
+        const modal = document.getElementById('items-modal');
+        const container = document.getElementById('modal-items');
+        
+        container.innerHTML = items.map(item => `
+            <div class="flex justify-between py-2 border-b">
+                <span>${item.quantity}x ${item.product_name}</span>
+                <span>${(item.price * item.quantity).toFixed(2)} ETB</span>
+            </div>
+        `).join('');
+        
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+    }
+}
 
-async function processPayment(button, orderId, subtotal) {
+function viewDetails(orderId) {
+    showItems(orderId);
+}
+
+function closeModal() {
+    const modal = document.getElementById('items-modal');
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+}
+
+// ==================== Payment Processing ====================
+async function processPayment(orderId, subtotal) {
     const tip = document.getElementById(`tip-${orderId}`)?.value || 0;
     const method = document.getElementById(`method-${orderId}`)?.value || 'cash';
     const proofFile = document.getElementById(`proof-${orderId}`)?.files[0];
     const proofRef = document.getElementById(`proof-ref-${orderId}`)?.value || '';
     
-    // Show loading state
+    if (method === 'digital' && !proofFile && !proofRef) {
+        alert('Please provide payment proof (screenshot or transaction reference)');
+        return;
+    }
+    
+    const button = event.target;
     const originalText = button.innerText;
-    button.innerText = '⏳ Processing...';
+    button.innerText = 'Processing...';
     button.disabled = true;
     
     const formData = new FormData();
@@ -184,92 +404,143 @@ async function processPayment(button, orderId, subtotal) {
     if (proofFile) formData.append('proof_image', proofFile);
     if (proofRef) formData.append('proof_reference', proofRef);
     
-    console.log("Sending payment request:", {
-        order_id: orderId,
-        tip: tip,
-        method: method,
-        has_proof: !!proofFile,
-        has_ref: !!proofRef
-    });
-    
     try {
         const response = await fetch('/payments/create/', {
             method: 'POST',
-            headers: {
-                'X-CSRFToken': getCSRFToken()
-            },
+            headers: { 'X-CSRFToken': getCSRFToken() },
             body: formData
         });
         
         const data = await response.json();
-        console.log("Payment response:", data);
         
-        if (data.status === 'approved') {
-            showToast(`✅ Payment completed! Total: ${data.amount} ETB`, 'success');
-            removeOrderCard(orderId);
+        if (data.status === 'approved' || (data.status === 'created' && method == 'cash' && approveData.status === 'approved')) {
+            showToast(`✅ Payment completed!`, 'success');
+            removeOrderRow(orderId);
+            updateSummaryTotals();
+            loadPaymentHistory();
         } else if (data.status === 'created') {
             if (method === 'cash') {
-                // Auto-approve cash payments
                 const approveResponse = await fetch(`/payments/${data.payment_id}/approve/`, {
                     method: 'POST',
-                    headers: {
-                        'X-CSRFToken': getCSRFToken(),
-                        'Content-Type': 'application/json'
-                    }
+                    headers: { 'X-CSRFToken': getCSRFToken() }
                 });
                 const approveData = await approveResponse.json();
                 if (approveData.status === 'approved') {
-                    showToast(`✅ Payment approved! Total: ${data.amount} ETB (Tip: ${data.tip} ETB)`, 'success');
-                    removeOrderCard(orderId);
-                } else {
-                    showToast(`⚠️ Payment created but approval failed: ${approveData.error}`, 'error');
+                    showToast(`✅ Payment approved! Tip: ${data.tip} ETB added to waiter`, 'success');
+                    removeOrderRow(orderId);
+                    updateSummaryTotals();
                 }
             } else {
-                showToast(`💰 Payment created! Amount: ${data.amount} ETB. Pending approval.`, 'info');
-                removeOrderCard(orderId);
+                showToast(`💰 Payment created! Waiting for approval.`, 'info');
+                removeOrderRow(orderId);
             }
         } else if (data.status === 'exists') {
-            showToast(`⚠️ Payment already pending for this order`, 'info');
+            showToast(`⚠️ Payment already pending`, 'warning');
         } else {
             showToast(`❌ Payment failed: ${data.error || 'Unknown error'}`, 'error');
         }
     } catch (err) {
-        console.error('Payment error:', err);
-        showToast('❌ Payment processing error: ' + err.message, 'error');
+        showToast('❌ Payment processing error', 'error');
     } finally {
         button.innerText = originalText;
         button.disabled = false;
     }
 }
 
-function removeOrderCard(orderId) {
-    const el = document.getElementById(`order-${orderId}`);
-    if (el) el.remove();
+function removeOrderRow(orderId) {
+    const row = document.getElementById(`order-row-${orderId}`);
+    const proofRow = document.getElementById(`proof-row-${orderId}`);
+    if (row) row.remove();
+    if (proofRow) proofRow.remove();
+    
+    const tbody = document.getElementById('orders-table-body');
+    if (tbody.children.length === 0) {
+        tbody.innerHTML = `
+            <tr><td colspan="10" class="px-4 py-8 text-center text-gray-500">No pending payments at this time</td></tr>
+        `;
+    }
+    document.getElementById('pending-count').innerText = tbody.children.length;
 }
 
-function showNotification(message, type) {
-    const colors = { success: 'bg-green-500', error: 'bg-red-500', info: 'bg-blue-500' };
-    const notification = document.createElement('div');
-    notification.className = `fixed top-4 right-4 ${colors[type]} text-white p-4 rounded shadow-lg z-50`;
-    notification.innerText = message;
-    document.body.appendChild(notification);
-    setTimeout(() => notification.remove(), 4000);
+async function updateSummaryTotals() {
+    // Get today's completed payments from the server
+    try {
+        const response = await fetch('/payments/today-summary/');
+        const data = await response.json();
+        
+        document.getElementById('today-total').innerText = data.total.toFixed(2);
+        document.getElementById('today-tips').innerText = data.tips.toFixed(2);
+    } catch (err) {
+        console.error('Error fetching summary:', err);
+        // Fallback to calculating from pending orders only
+        let total = 0;
+        let tips = 0;
+        
+        document.querySelectorAll('[id^="subtotal-"]').forEach(el => {
+            total += parseFloat(el.innerText) || 0;
+        });
+        document.querySelectorAll('[id^="tip-"]').forEach(el => {
+            tips += parseFloat(el.value) || 0;
+        });
+        
+        document.getElementById('today-total').innerText = (total + tips).toFixed(2);
+        document.getElementById('today-tips').innerText = tips.toFixed(2);
+    }
+}
+
+// ==================== WebSocket ====================
+function connectSocket() {
+    const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+    socket = new WebSocket(protocol + window.location.host + "/ws/notifications/");
+    
+    socket.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        if (data.type === "order_ready" || data.type === "order_ready_for_payment") {
+            showToast(`🆕 New order ready for payment!`, 'info');
+            playSound();
+            setTimeout(() => window.location.reload(), 1000);
+        }
+    };
+    socket.onclose = () => setTimeout(connectSocket, 5000);
+}
+
+function showToast(message, type) {
+    const colors = { success: 'bg-green-500', error: 'bg-red-500', info: 'bg-blue-500', warning: 'bg-yellow-500' };
+    const toast = document.createElement('div');
+    toast.className = `fixed bottom-4 right-4 ${colors[type]} text-white px-4 py-2 rounded shadow-lg z-50`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
 }
 
 function playSound() {
     const audio = document.getElementById("notif-sound");
-    if (audio) { audio.currentTime = 0; audio.play().catch(() => {}); }
+    if (audio) audio.play().catch(() => {});
 }
 
 function getCSRFToken() {
-    return document.cookie.split('; ').find(row => row.startsWith('csrftoken='))?.split('=')[1] || '';
+    return document.cookie.split('; ').find(row => row.startsWith('csrftoken='))?.split('=')[1];
 }
 
-document.addEventListener('DOMContentLoaded', function() {
-    connectWebSocket();
-    startAutoRefresh();
+// Store order items
+{% for order_data in orders %}
+currentOrderItems[{{ order_data.order.id }}] = [{% for item in order_data.items %}{product_name: "{{ item.product.name }}", quantity: {{ item.quantity }}, price: {{ item.price_at_time }} },{% endfor %}];
+{% endfor %}
+
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+    connectSocket();
+    updateSummaryTotals();
 });
 </script>
 
-<style> .hidden { display: none; } </style>
+<style>
+.hidden { display: none; }
+@media print {
+    .tab-content.hidden { display: block !important; }
+    #pending-tab { display: none !important; }
+    nav, .bg-blue-100, .bg-green-100, .bg-yellow-100, .bg-purple-100, .bg-orange-100, button, select, input { display: none !important; }
+}
+</style>
+
 {% endblock %}

@@ -13,13 +13,14 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import generics, permissions
 from decimal import Decimal
-
+from datetime import timedelta
 from .models import Payment, PaymentProof
 from orders.models import Order, TableSession, ActiveTableSession
 from notifications.models import Notification
-
+import csv
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
+from django.http import HttpResponse, JsonResponse
 
 
 @login_required
@@ -171,7 +172,7 @@ def create_payment_with_proof(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def approve_payment(request, payment_id):
-    """Approve payment and distribute tip to waiter"""
+    """Approve payment and distribute tip to waiter - but DON'T close session"""
     
     try:
         payment = get_object_or_404(Payment, id=payment_id)
@@ -191,13 +192,16 @@ def approve_payment(request, payment_id):
             # Get order and session info
             order = payment.order
             
-            # Try to get waiter from active_session or legacy session
+            # Get waiter
             waiter = None
             table_number = None
-            
             if order.active_session:
                 waiter = order.active_session.waiter
                 table_number = order.active_session.table.number
+                # Mark session as paid but DON'T close it
+                order.active_session.is_paid = True
+                order.active_session.payment_completed_at = timezone.now()
+                order.active_session.save()
             elif order.session:
                 waiter = order.session.assigned_employee
                 table_number = order.session.table.number
@@ -223,24 +227,12 @@ def approve_payment(request, payment_id):
             order.status = 'paid'
             order.save()
             
-            # Close session if all orders are paid (for legacy sessions)
-            if order.session:
-                unpaid_orders = order.session.order_set.exclude(status='paid').count()
-                if unpaid_orders == 0:
-                    order.session.is_active = False
-                    order.session.ended_at = timezone.now()
-                    order.session.save()
-            
-            # Close active session if all orders are paid
-            if order.active_session:
-                unpaid_orders = order.active_session.get_orders().exclude(status='paid').count()
-                if unpaid_orders == 0:
-                    order.active_session.is_active = False
-                    order.active_session.ended_at = timezone.now()
-                    order.active_session.save()
-            
-            # Close all notifications for this order
-            Notification.objects.filter(order=order, is_closed=False).update(is_closed=True)
+            # DO NOT close the session - let it remain active for possible additional orders
+            # The session will be closed when:
+            # 1. Waiter manually clears the table
+            # 2. Customer ends session from UI
+            # 3. Auto-cleanup after grace period
+            # 4. New customer logs in (auto-replaces old session)
             
             # Notify waiter
             channel_layer = get_channel_layer()
@@ -290,7 +282,6 @@ def approve_payment(request, payment_id):
         import traceback
         traceback.print_exc()
         return JsonResponse({"error": str(e)}, status=500)
-
 
 @login_required
 @csrf_exempt
@@ -404,3 +395,174 @@ def payment_status(request, payment_id):
         "amount": str(payment.amount),
         "session": payment.session.id if payment.session else None
     })
+
+@login_required
+def payment_history(request):
+    """Get payment history with filters"""
+    filter_type = request.GET.get('filter', 'today')
+    
+    now = timezone.now()
+    if filter_type == 'today':
+        start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif filter_type == 'yesterday':
+        start_date = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        end_date = start_date + timedelta(days=1)
+    elif filter_type == 'week':
+        start_date = now - timedelta(days=7)
+    elif filter_type == 'month':
+        start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        start_date = None
+    
+    payments = Payment.objects.filter(status='approved')
+    if start_date:
+        payments = payments.filter(created_at__gte=start_date)
+    if filter_type == 'yesterday':
+        payments = payments.filter(created_at__lt=end_date)
+    
+    payments = payments.select_related('order', 'order__active_session__table', 'order__session__table', 'created_by').order_by('-created_at')
+    
+    payment_data = []
+    total_sum = 0
+    total_tips = 0
+    
+    for payment in payments:
+        order = payment.order
+        waiter_name = None
+        table_number = None
+        
+        if order.active_session:
+            waiter_name = order.active_session.waiter.username if order.active_session.waiter else None
+            table_number = order.active_session.table.number
+        elif order.session:
+            waiter_name = order.session.assigned_employee.username if order.session.assigned_employee else None
+            table_number = order.session.table.number
+        
+        subtotal = float(payment.amount) - float(payment.tip)
+        total_sum += float(payment.amount)
+        total_tips += float(payment.tip)
+        
+        payment_data.append({
+            'id': payment.id,
+            'order_id': order.id,
+            'table_number': table_number,
+            'waiter_name': waiter_name,
+            'item_count': order.items.count(),
+            'subtotal': round(subtotal, 2),
+            'tip': float(payment.tip),
+            'total': float(payment.amount),
+            'method': payment.method,
+            'cashier_name': payment.created_by.username if payment.created_by else 'System',
+            'status': payment.status,
+            'created_at': payment.created_at.isoformat(),
+        })
+    
+    return JsonResponse({
+        'payments': payment_data,
+        'summary': {
+            'count': len(payment_data),
+            'total': round(total_sum, 2),
+            'tips': round(total_tips, 2)
+        }
+    })
+
+@login_required
+def today_summary(request):
+    """Get today's payment summary"""
+    from django.utils import timezone
+    from datetime import timedelta
+    
+    now = timezone.now()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    # Get today's approved payments
+    today_payments = Payment.objects.filter(
+        status='approved',
+        created_at__gte=today_start
+    )
+    
+    total = sum(float(p.amount) for p in today_payments)
+    tips = sum(float(p.tip) for p in today_payments)
+    
+    # Also get pending orders for today's potential revenue
+    pending_orders = Order.objects.filter(
+        status__in=['ready', 'served']
+    ).exclude(
+        status='paid'
+    )
+    
+    pending_total = 0
+    for order in pending_orders:
+        for item in order.items.all():
+            pending_total += float(item.quantity) * float(item.price_at_time)
+    
+    return JsonResponse({
+        'total': round(total, 2),
+        'tips': round(tips, 2),
+        'pending_total': round(pending_total, 2),
+        'count': today_payments.count()
+    })
+
+
+@login_required
+def export_payments(request):
+    """Export payment history to CSV"""
+    filter_type = request.GET.get('filter', 'today')
+    
+    now = timezone.now()
+    if filter_type == 'today':
+        start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif filter_type == 'yesterday':
+        start_date = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        end_date = start_date + timedelta(days=1)
+    elif filter_type == 'week':
+        start_date = now - timedelta(days=7)
+    elif filter_type == 'month':
+        start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        start_date = None
+    
+    payments = Payment.objects.filter(status='approved')
+    if start_date:
+        payments = payments.filter(created_at__gte=start_date)
+    if filter_type == 'yesterday':
+        payments = payments.filter(created_at__lt=end_date)
+    
+    payments = payments.select_related('order', 'created_by').order_by('-created_at')
+    
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = f'attachment; filename="payments_{filter_type}_{now.strftime("%Y%m%d")}.csv"'
+    
+    writer = csv.writer(response)
+    writer.writerow(['Date', 'Time', 'Order ID', 'Table', 'Waiter', 'Items', 'Subtotal', 'Tip', 'Total', 'Method', 'Cashier', 'Status'])
+    
+    for payment in payments:
+        order = payment.order
+        waiter_name = None
+        table_number = None
+        
+        if order.active_session and order.active_session.waiter:
+            waiter_name = order.active_session.waiter.username
+            table_number = order.active_session.table.number
+        elif order.session and order.session.assigned_employee:
+            waiter_name = order.session.assigned_employee.username
+            table_number = order.session.table.number
+        
+        subtotal = float(payment.amount) - float(payment.tip)
+        
+        writer.writerow([
+            payment.created_at.strftime('%Y-%m-%d'),
+            payment.created_at.strftime('%H:%M:%S'),
+            order.id,
+            table_number,
+            waiter_name or 'N/A',
+            order.items.count(),
+            f"{subtotal:.2f}",
+            f"{payment.tip:.2f}",
+            f"{payment.amount:.2f}",
+            payment.method,
+            payment.created_by.username if payment.created_by else 'System',
+            payment.status
+        ])
+    
+    return response

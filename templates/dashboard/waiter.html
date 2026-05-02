@@ -2,17 +2,38 @@
 
 {% block content %}
 
-<h2 class="text-xl font-bold mb-4">Your Tables</h2>
+<!-- Refresh Button added at the top of Your Tables section -->
+<div class="flex justify-between items-center mb-4">
+    <h2 class="text-xl font-bold">Your Tables</h2>
+    <button onclick="refreshSessions()" 
+            class="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600 transition">
+        🔄 Refresh Tables
+    </button>
+</div>
 
 <div id="tables-section" class="grid grid-cols-2 gap-4 mb-6">
     {% for session in sessions %}
-        <div class="bg-white p-4 rounded shadow" data-table="{{ session.table.number }}">
-            <p class="font-semibold">Table {{ session.table.number }}</p>
-            <p class="text-sm text-gray-500">Session {{ session.id }}</p>
-            <a href="{% url 'create_order' session.id %}"
-               class="bg-indigo-500 text-white px-3 py-1 rounded mt-2 inline-block hover:bg-indigo-600 transition">
-               Create Order
-            </a>
+        <div class="bg-white p-4 rounded shadow" data-table="{{ session.table.number }}" data-session-id="{{ session.id }}">
+            <div class="flex justify-between items-start">
+                <div>
+                    <p class="font-semibold">Table {{ session.table.number }}</p>
+                    <p class="text-sm text-gray-500">Session {{ session.id }}</p>
+                    {% if session.is_paid %}
+                        <p class="text-xs text-green-600">✓ Payment completed</p>
+                    {% endif %}
+                </div>
+                <div class="flex gap-2">
+                    <a href="{% url 'create_order' session.id %}"
+                       class="bg-indigo-500 text-white px-3 py-1 rounded text-sm hover:bg-indigo-600 transition">
+                       Create Order
+                    </a>
+                    <button onclick="clearTable({{ session.id }})"
+                            class="bg-red-500 text-white px-3 py-1 rounded text-sm hover:bg-red-600 transition"
+                            title="Clear table for next customers">
+                        🧹 Clear Table
+                    </button>
+                </div>
+            </div>
         </div>
     {% empty %}
         <p>No active tables</p>
@@ -252,6 +273,59 @@ function updateReadyCount() {
     const noReadyMsg = document.getElementById('no-ready-orders');
     if (noReadyMsg) {
         noReadyMsg.style.display = count > 0 ? 'none' : 'block';
+    }
+}
+
+// ==================== REFRESH SESSIONS FUNCTION ====================
+
+function refreshSessions() {
+    showToast('Refreshing tables...', 'info');
+    fetch('/waiter/refresh-sessions/', {
+        method: 'POST',
+        headers: { 
+            'X-CSRFToken': getCSRFToken(),
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            showToast(`Tables refreshed! ${data.created} sessions created.`, 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast(data.error || 'Error refreshing tables', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showToast('Network error refreshing tables', 'error');
+    });
+}
+
+// ==================== CLEAR TABLE FUNCTION ====================
+
+function clearTable(sessionId) {
+    if (confirm('Clear this table? This will end the session and make it available for new customers.')) {
+        fetch(`/waiter/clear-table/${sessionId}/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCSRFToken(),
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                showToast('Table cleared successfully!', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Error clearing table', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showToast('Network error clearing table', 'error');
+        });
     }
 }
 

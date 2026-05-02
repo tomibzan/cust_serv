@@ -705,6 +705,8 @@ def update_item_status(request, item_id, status):
 
 # orders/views.py - Fix cashier_dashboard
 
+# orders/views.py - Update cashier_dashboard
+
 @login_required
 def cashier_dashboard(request):
     """Show orders that are ready for payment"""
@@ -714,13 +716,15 @@ def cashier_dashboard(request):
     ).exclude(
         status='paid'
     ).select_related(
-        'active_session__table',  # Use active_session instead of session
-        'session__table'  # Keep legacy for backward compatibility
+        'active_session__table',
+        'active_session__waiter',
+        'session__table',
+        'session__assigned_employee'
     ).prefetch_related(
         'items__product'
     ).order_by('created_at')
-
-    print(f"💰 cashier_dashboard: Found {orders.count()} orders ready for payment")
+    
+    print(f"💰 Cashier dashboard: {orders.count()} orders ready for payment")
     
     enriched_orders = []
     for order in orders:
@@ -736,25 +740,22 @@ def cashier_dashboard(request):
                 'price_at_time': float(item.price_at_time),
             })
         
-        # Fix: Get table number safely from either active_session or session
+        # Get table number and waiter
         table_number = None
         if order.active_session:
             table_number = order.active_session.table.number
         elif order.session:
             table_number = order.session.table.number
         
-        # Skip orders with no table (shouldn't happen but safety check)
         if table_number is None:
-            print(f"⚠️ Order #{order.id} has no table association, skipping")
             continue
         
         enriched_orders.append({
             "order": order,
             "items": items_data,
-            "subtotal": float(subtotal),
+            "subtotal": round(subtotal, 2),
             "table_number": table_number,
         })
-        print(f"  - Order #{order.id}: Table {table_number}, Items: {len(items_data)}, Subtotal: {subtotal}")
     
     return render(request, "dashboard/cashier.html", {
         "orders": enriched_orders

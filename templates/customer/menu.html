@@ -111,6 +111,17 @@
     </div>
 
     <div id="notification-area" class="fixed top-20 right-4 z-50"></div>
+    
+    <!-- ============================================ -->
+    <!-- CUSTOMER SELF-CLEAR BUTTON (END SESSION) -->
+    <!-- ============================================ -->
+    <div class="fixed bottom-4 left-4 z-50">
+        <button onclick="endSession()" 
+                class="bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg hover:bg-red-600 transition">
+            🚪 End Session
+        </button>
+    </div>
+    
     <audio id="notif-sound" src="https://actions.google.com/sounds/v1/alerts/beep_short.ogg"></audio>
 
     <script>
@@ -121,7 +132,7 @@
         $(document).ready(function() {
             loadCart();
             
-            // ✅ UPDATED: Load order history on page load
+            // Load order history on page load
             loadOrderHistory();
             
             startPolling();
@@ -134,7 +145,69 @@
             setInterval(loadOrderHistory, 10000);
         });
 
-        // --- WebSocket Integration ---
+        // ==================== END SESSION FUNCTION ====================
+        
+        function endSession() {
+            if (confirm('End your session? The table will be available for next customers.')) {
+                // Show loading state
+                const endButton = event.target;
+                const originalText = endButton.innerText;
+                endButton.innerText = 'Ending...';
+                endButton.disabled = true;
+                
+                fetch('/customer/end-session/', {
+                    method: 'POST',
+                    headers: { 
+                        'X-CSRFToken': getCSRFToken(),
+                        'Content-Type': 'application/json'
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        showNotification('Session ended. Thank you for visiting!', 'success');
+                        // Clear local storage
+                        localStorage.removeItem('customer_cart');
+                        // Redirect to login page after delay
+                        setTimeout(() => {
+                            window.location.href = '/customer/login/';
+                        }, 2000);
+                    } else {
+                        showNotification(data.error || 'Error ending session', 'error');
+                        endButton.innerText = originalText;
+                        endButton.disabled = false;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showNotification('Network error ending session', 'error');
+                    endButton.innerText = originalText;
+                    endButton.disabled = false;
+                });
+            }
+        }
+
+        function checkSession() {
+            fetch('/customer/api/check-session/')
+                .then(response => response.json())
+                .then(data => {
+                    if (!data.valid) {
+                        showNotification('Session expired. Please login again.', 'error');
+                        setTimeout(() => {
+                            window.location.href = '/customer/login/';
+                        }, 2000);
+                    } else if (data.is_paid) {
+                        showNotification('Previous payment completed. You can continue ordering!', 'info');
+                    }
+                })
+                .catch(err => console.error('Session check error:', err));
+            }
+
+        // Check session every 30 seconds
+        setInterval(checkSession, 30000);
+
+        // ==================== WebSocket Integration ====================
+        
         function connectCustomerWebSocket() {
             const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
             customerSocket = new WebSocket(protocol + window.location.host + `/ws/customer/${sessionId}/`);
@@ -152,6 +225,14 @@
                     loadOrderHistory(); 
                     playSound();
                 }
+                
+                // Session ended notification
+                if (data.type === "session_ended") {
+                    showNotification('Your session has ended. Thank you!', 'info');
+                    setTimeout(() => {
+                        window.location.href = '/customer/login/';
+                    }, 3000);
+                }
             };
             
             customerSocket.onclose = () => {
@@ -160,7 +241,8 @@
             };
         }
 
-        // --- Order History Functions ---
+        // ==================== Order History Functions ====================
+        
         async function loadOrderHistory() {
             try {
                 const response = await fetch('/customer/api/order-history/');
@@ -235,7 +317,8 @@
             });
         }
         
-        // --- Cart Functions ---
+        // ==================== Cart Functions ====================
+        
         function updateQuantity(productId, delta) {
             let current = cart[productId] || 0;
             let newQty = current + delta;
@@ -324,7 +407,8 @@
             $('#cart-modal').addClass('hidden');
         }
         
-        // --- Order Functions ---
+        // ==================== Order Functions ====================
+        
         async function placeOrder() {
             if (Object.keys(cart).length === 0) {
                 showNotification('Your cart is empty!', 'error');
@@ -368,7 +452,8 @@
             }
         }
         
-        // --- Waiter Call ---
+        // ==================== Waiter Call ====================
+        
         async function callWaiter() {
             const message = prompt('What do you need assistance with?', 'Service needed at table');
             if (!message) return;
@@ -395,7 +480,8 @@
             }
         }
 
-        // --- Filter Functions ---
+        // ==================== Filter Functions ====================
+        
         function filterByStation(station) {
             $('.station-filter').removeClass('bg-blue-600 text-white').addClass('bg-gray-200 text-gray-700');
             $(event.target).removeClass('bg-gray-200 text-gray-700').addClass('bg-blue-600 text-white');
@@ -408,7 +494,8 @@
             }
         }
         
-        // --- Polling for service requests ---
+        // ==================== Polling for service requests ====================
+        
         function startPolling() {
             setInterval(async () => {
                 try {
@@ -423,7 +510,8 @@
             }, 10000);
         }
         
-        // --- UI Helpers ---
+        // ==================== UI Helpers ====================
+        
         function showNotification(message, type) {
             const colors = { 
                 success: 'bg-green-500', 

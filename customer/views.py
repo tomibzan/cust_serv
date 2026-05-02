@@ -6,6 +6,7 @@ from django.utils import timezone
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+from orders.session_utils import get_or_create_customer_session
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.db import transaction
@@ -24,75 +25,77 @@ from users.models import Client
 from notifications.models import Notification
 
 
+
 def customer_login(request):
     """Customer login using phone number"""
     if request.method == 'POST':
         phone = request.POST.get('phone')
         table_number = request.POST.get('table_number')
         
-        try:
-            # Find or create client
-            client, created = Client.objects.get_or_create(
-                phone=phone,
-                defaults={'name': f"Customer {phone}"}
-            )
-            
-            # Get the table
-            table = get_object_or_404(Table, number=table_number, is_active=True)
-            
-            # Find the active session for this table
-            active_session = ActiveTableSession.objects.filter(
-                table=table,
-                is_active=True
-            ).first()
-            
-            if not active_session:
-                # Try to find from today's shift
-                today = date.today()
-                shift = WorkShift.objects.filter(
-                    shift_date=today,
-                    is_active=True,
-                    table_assignments__table=table
-                ).first()
-                
-                if shift:
-                    active_session = ActiveTableSession.objects.create(
-                        table=table,
-                        waiter=shift.employee,
-                        client=client,
-                        is_client_identified=True,
-                        is_active=True
-                    )
-                else:
-                    messages.error(request, f'No active session for Table {table_number}. Please contact staff.')
-                    return render(request, 'customer/login.html')
-            
-            # Ensure the session has the client linked
-            if not active_session.client:
-                active_session.client = client
-                active_session.is_client_identified = True
-                active_session.save()
-            
-            # Store in session
-            request.session['customer_phone'] = phone
-            request.session['table_number'] = table_number
-            request.session['session_id'] = active_session.id
-            
-            return redirect('customer_menu')
-            
-        except Table.DoesNotExist:
-            messages.error(request, 'Invalid table number')
-            
+        # Validate input
+        if not phone or not table_number:
+            messages.error(request, 'Please provide both phone number and table number')
+            return render(request, 'customer/login.html')
+        
+        # Get or create session with smart session management
+        session, error = get_or_create_customer_session(table_number, phone)
+        
+        if error:
+            messages.error(request, error)
+            return render(request, 'customer/login.html')
+        
+        # Store in session
+        request.session['customer_phone'] = phone
+        request.session['table_number'] = table_number
+        request.session['session_id'] = session.id
+        
+        messages.success(request, f'Welcome to Table {table_number}!')
+        return redirect('customer_menu')
+    
     return render(request, 'customer/login.html')
 
 
 def customer_menu(request):
     """Display menu for customers"""
+    
     if not request.session.get('customer_phone'):
         return redirect('customer_login')
     
     table_number = request.session.get('table_number')
     session_id = request.session.get('session_id')
+    
+    # Try to get the session
+    try:
+        session = ActiveTableSession.objects.get(id=session_id, is_active=True)
+    except ActiveTableSession.DoesNotExist:
+        # Session doesn't exist - create a new one
+        print(f"Session {session_id} not found, creating new session for table {table_number}")
+        
+        # Get or create new session
+        from orders.session_utils import get_or_create_customer_session
+        phone = request.session.get('customer_phone')
+        
+        session, error = get_or_create_customer_session(table_number, phone)
+        
+        if error or not session:
+            messages.error(request, "Unable to start session. Please login again.")
+            return redirect('customer_login')
+        
+        # Update session ID in customer session
+        request.session['session_id'] = session.id
+        messages.info(request, "Your session was refreshed. You can continue ordering.")
+    
+    # Ensure session has client info
+    if session.client is None and request.session.get('customer_phone'):
+        from users.models import Client
+        phone = request.session.get('customer_phone')
+        client, _ = Client.objects.get_or_create(
+            phone=phone,
+            defaults={'name': f"Customer {phone}"}
+        )
+        session.client = client
+        session.is_client_identified = True
+        session.save()
     
     products = Product.objects.filter(available=True).select_related('product_source')
     
@@ -103,9 +106,6 @@ def customer_menu(request):
         if station not in products_by_station:
             products_by_station[station] = []
         products_by_station[station].append(product)
-    
-    # Get active session
-    session = get_object_or_404(ActiveTableSession, id=session_id, is_active=True)
     
     context = {
         'products_by_station': products_by_station,
@@ -180,6 +180,8 @@ def customer_call_waiter(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 
+# customer/views.py - Update customer_place_order
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def customer_place_order(request):
@@ -196,10 +198,25 @@ def customer_place_order(request):
         if not items:
             return JsonResponse({'error': 'No items in order'}, status=400)
         
-        # Get session
-        session = get_object_or_404(ActiveTableSession, id=session_id, is_active=True)
-        waiter = session.waiter
+        # Try to get session, recreate if needed
+        try:
+            session = ActiveTableSession.objects.get(id=session_id, is_active=True)
+        except ActiveTableSession.DoesNotExist:
+            # Session doesn't exist - create a new one
+            phone = request.session.get('customer_phone')
+            table_number = request.session.get('table_number')
+            
+            from orders.session_utils import get_or_create_customer_session
+            session, error = get_or_create_customer_session(table_number, phone)
+            
+            if error or not session:
+                return JsonResponse({'error': 'Session expired. Please login again.'}, status=401)
+            
+            # Update session ID
+            request.session['session_id'] = session.id
         
+        # Get waiter
+        waiter = session.waiter
         if not waiter:
             return JsonResponse({'error': 'No waiter assigned to this table'}, status=400)
         
@@ -308,8 +325,54 @@ def customer_place_order(request):
             })
             
     except Exception as e:
-        logger.error(f"Error in customer_place_order: {str(e)}")
+        print(f"Error in customer_place_order: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)
+    
+@csrf_exempt
+@require_http_methods(["POST"])
+def end_session(request):
+    """Customer ends their session"""
+    if not request.session.get('customer_phone'):
+        return JsonResponse({'error': 'Not logged in'}, status=401)
+    
+    session_id = request.session.get('session_id')
+    
+    try:
+        session = ActiveTableSession.objects.get(id=session_id, is_active=True)
+        
+        # Only allow ending if no pending orders
+        if session.has_pending_orders():
+            return JsonResponse({'error': 'Cannot end session: pending orders exist'}, status=400)
+        
+        session.close_session(closed_by="customer")
+        
+        # Clear customer session data
+        request.session.flush()
+        
+        return JsonResponse({'status': 'success', 'message': 'Session ended'})
+        
+    except ActiveTableSession.DoesNotExist:
+        return JsonResponse({'error': 'Session not found'}, status=404) 
+
+def check_session(request):
+    """Check if customer session is still valid"""
+    if not request.session.get('customer_phone'):
+        return JsonResponse({'valid': False, 'error': 'Not logged in'})
+    
+    session_id = request.session.get('session_id')
+    
+    try:
+        session = ActiveTableSession.objects.get(id=session_id, is_active=True)
+        return JsonResponse({
+            'valid': True,
+            'table': session.table.number,
+            'session_id': session.id,
+            'is_paid': session.is_paid
+        })
+    except ActiveTableSession.DoesNotExist:
+        return JsonResponse({'valid': False, 'error': 'Session expired'})       
 
 
 def get_menu_items(request):
