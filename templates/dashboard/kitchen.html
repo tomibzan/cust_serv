@@ -2,91 +2,294 @@
 
 {% block content %}
 
-<h2 class="text-2xl font-bold mb-6 capitalize">
-    {{ station }} Station
-</h2>
-
-<div id="kitchen-items" class="grid grid-cols-3 gap-4">
-
-    <!-- Pending -->
-    <div>
-        <h3 class="font-semibold mb-2">Pending</h3>
-
-        {% for item in items %}
-            {% if item.status == 'pending' %}
-                <div class="bg-yellow-100 p-3 mb-3 rounded shadow">
-
-                    <p class="font-bold">
-                        Table {{ item.order.session.table.number }}
-                    </p>
-
-                    <p>{{ item.product.name }} x{{ item.quantity }}</p>
-
-                    <button onclick="updateItem({{ item.id }}, 'preparing')"
-                        class="bg-blue-500 text-white px-2 py-1 mt-2 rounded">
-                        Start Preparing
-                    </button>
-
+<!-- Modern Header Section -->
+<div class="mb-8">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+            <div class="flex items-center gap-3 mb-2">
+                <div class="w-12 h-12 bg-gradient-to-r from-primary-500 to-primary-600 rounded-2xl flex items-center justify-center shadow-lg">
+                    <i class="ri-knife-line text-white text-2xl"></i>
                 </div>
-            {% endif %}
-        {% endfor %}
-    </div>
-
-    <!-- Preparing -->
-    <div>
-        <h3 class="font-semibold mb-2">Preparing</h3>
-
-        {% for item in items %}
-            {% if item.status == 'preparing' %}
-                <div class="bg-blue-100 p-3 mb-3 rounded shadow">
-
-                    <p class="font-bold">
-                        Table {{ item.order.session.table.number }}
-                    </p>
-
-                    <p>{{ item.product.name }} x{{ item.quantity }}</p>
-
-                    <button onclick="updateItem({{ item.id }}, 'ready')"
-                        class="bg-green-500 text-white px-2 py-1 mt-2 rounded">
-                        Mark Ready
-                    </button>
-
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-800 capitalize">{{ station }} Station</h1>
+                    <p class="text-gray-500 mt-1">Manage your food preparation queue</p>
                 </div>
-            {% endif %}
-        {% endfor %}
+            </div>
+        </div>
+        <div class="flex items-center gap-3">
+            <div class="bg-white rounded-xl px-4 py-2 shadow-sm border border-gray-100">
+                <i class="ri-time-line text-primary-500"></i>
+                <span id="current-time" class="text-sm text-gray-600 ml-2"></span>
+            </div>
+            <div class="bg-gradient-to-r from-primary-500 to-primary-600 rounded-xl px-4 py-2 shadow-sm">
+                <i class="ri-restaurant-line text-white"></i>
+                <span class="text-sm text-white ml-1 capitalize">{{ station }}</span>
+            </div>
+        </div>
     </div>
-
-    <!-- Ready -->
-    <div>
-        <h3 class="font-semibold mb-2">Ready</h3>
-
-        {% for item in items %}
-            {% if item.status == 'ready' %}
-                <div class="bg-green-100 p-3 mb-3 rounded shadow">
-
-                    <p class="font-bold">
-                        Table {{ item.order.session.table.number }}
-                    </p>
-
-                    <p>{{ item.product.name }} x{{ item.quantity }}</p>
-
-                </div>
-            {% endif %}
-        {% endfor %}
-    </div>
-
 </div>
 
+<!-- Stats Cards -->
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+    <div class="bg-gradient-to-r from-yellow-500 to-orange-500 rounded-2xl p-5 text-white shadow-lg">
+        <div class="flex justify-between items-start">
+            <div>
+                <p class="text-yellow-100 text-sm">Pending Orders</p>
+                <p id="pending-count" class="text-3xl font-bold mt-1">{{ items|selectattr:"status","equalto","pending"|list|length }}</p>
+            </div>
+            <i class="ri-time-line text-3xl text-yellow-200"></i>
+        </div>
+    </div>
+    <div class="bg-gradient-to-r from-blue-500 to-indigo-500 rounded-2xl p-5 text-white shadow-lg">
+        <div class="flex justify-between items-start">
+            <div>
+                <p class="text-blue-100 text-sm">In Progress</p>
+                <p id="preparing-count" class="text-3xl font-bold mt-1">{{ items|selectattr:"status","equalto","preparing"|list|length }}</p>
+            </div>
+            <i class="ri-fire-line text-3xl text-blue-200"></i>
+        </div>
+    </div>
+    <div class="bg-gradient-to-r from-green-500 to-emerald-500 rounded-2xl p-5 text-white shadow-lg">
+        <div class="flex justify-between items-start">
+            <div>
+                <p class="text-green-100 text-sm">Completed</p>
+                <p id="ready-count" class="text-3xl font-bold mt-1">{{ items|selectattr:"status","equalto","ready"|list|length }}</p>
+            </div>
+            <i class="ri-checkbox-circle-line text-3xl text-green-200"></i>
+        </div>
+    </div>
+</div>
+
+<!-- Kanban Board -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    
+    <!-- Pending Column -->
+    <div class="bg-gray-50 rounded-2xl overflow-hidden shadow-sm border border-gray-100">
+        <div class="bg-gradient-to-r from-yellow-500 to-orange-500 px-5 py-3">
+            <div class="flex justify-between items-center">
+                <h3 class="font-semibold text-white flex items-center gap-2">
+                    <i class="ri-time-line"></i> Pending
+                </h3>
+                <span id="pending-badge" class="bg-white/20 text-white px-2 py-0.5 rounded-full text-xs font-medium">
+                    {{ items|selectattr:"status","equalto","pending"|list|length }}
+                </span>
+            </div>
+        </div>
+        <div id="pending-items" class="p-4 space-y-3 max-h-[600px] overflow-y-auto">
+            {% for item in items %}
+                {% if item.status == 'pending' %}
+                <div class="bg-white rounded-xl p-4 shadow-sm border-l-4 border-yellow-500 hover:shadow-md transition-all duration-200 group">
+                    <div class="flex justify-between items-start mb-2">
+                        <div class="flex items-center gap-2">
+                            <div class="w-8 h-8 bg-yellow-100 rounded-lg flex items-center justify-center">
+                                <i class="ri-table-line text-yellow-600"></i>
+                            </div>
+                            <p class="font-bold text-gray-800">Table {{ item.order.session.table.number }}</p>
+                        </div>
+                        <span class="text-xs text-gray-400">Order #{{ item.order.id }}</span>
+                    </div>
+                    <p class="text-gray-700 font-medium mt-2">{{ item.product.name }} <span class="text-gray-500 text-sm">x{{ item.quantity }}</span></p>
+                    <button onclick="updateItem({{ item.id }}, 'preparing')"
+                            class="mt-3 w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl transition flex items-center justify-center gap-2 text-sm font-medium">
+                        <i class="ri-play-line"></i> Start Preparing
+                    </button>
+                </div>
+                {% endif %}
+            {% else %}
+                <div class="text-center py-12 text-gray-400">
+                    <i class="ri-inbox-line text-5xl mb-2"></i>
+                    <p>No pending orders</p>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Preparing Column -->
+    <div class="bg-gray-50 rounded-2xl overflow-hidden shadow-sm border border-gray-100">
+        <div class="bg-gradient-to-r from-blue-500 to-indigo-500 px-5 py-3">
+            <div class="flex justify-between items-center">
+                <h3 class="font-semibold text-white flex items-center gap-2">
+                    <i class="ri-fire-line"></i> Preparing
+                </h3>
+                <span id="preparing-badge" class="bg-white/20 text-white px-2 py-0.5 rounded-full text-xs font-medium">
+                    {{ items|selectattr:"status","equalto","preparing"|list|length }}
+                </span>
+            </div>
+        </div>
+        <div id="preparing-items" class="p-4 space-y-3 max-h-[600px] overflow-y-auto">
+            {% for item in items %}
+                {% if item.status == 'preparing' %}
+                <div class="bg-white rounded-xl p-4 shadow-sm border-l-4 border-blue-500 hover:shadow-md transition-all duration-200">
+                    <div class="flex justify-between items-start mb-2">
+                        <div class="flex items-center gap-2">
+                            <div class="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+                                <i class="ri-fire-line text-blue-600"></i>
+                            </div>
+                            <p class="font-bold text-gray-800">Table {{ item.order.session.table.number }}</p>
+                        </div>
+                        <span class="text-xs text-gray-400">Order #{{ item.order.id }}</span>
+                    </div>
+                    <p class="text-gray-700 font-medium mt-2">{{ item.product.name }} <span class="text-gray-500 text-sm">x{{ item.quantity }}</span></p>
+                    <button onclick="updateItem({{ item.id }}, 'ready')"
+                            class="mt-3 w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-xl transition flex items-center justify-center gap-2 text-sm font-medium">
+                        <i class="ri-check-line"></i> Mark Ready
+                    </button>
+                </div>
+                {% endif %}
+            {% else %}
+                <div class="text-center py-12 text-gray-400">
+                    <i class="ri-inbox-line text-5xl mb-2"></i>
+                    <p>No items in progress</p>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Ready Column -->
+    <div class="bg-gray-50 rounded-2xl overflow-hidden shadow-sm border border-gray-100">
+        <div class="bg-gradient-to-r from-green-500 to-emerald-500 px-5 py-3">
+            <div class="flex justify-between items-center">
+                <h3 class="font-semibold text-white flex items-center gap-2">
+                    <i class="ri-checkbox-circle-line"></i> Ready
+                </h3>
+                <span id="ready-badge" class="bg-white/20 text-white px-2 py-0.5 rounded-full text-xs font-medium">
+                    {{ items|selectattr:"status","equalto","ready"|list|length }}
+                </span>
+            </div>
+        </div>
+        <div id="ready-items" class="p-4 space-y-3 max-h-[600px] overflow-y-auto">
+            {% for item in items %}
+                {% if item.status == 'ready' %}
+                <div class="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl p-4 shadow-sm border-l-4 border-green-500">
+                    <div class="flex justify-between items-start mb-2">
+                        <div class="flex items-center gap-2">
+                            <div class="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
+                                <i class="ri-restaurant-line text-green-600"></i>
+                            </div>
+                            <p class="font-bold text-gray-800">Table {{ item.order.session.table.number }}</p>
+                        </div>
+                        <span class="text-xs text-gray-400">Order #{{ item.order.id }}</span>
+                    </div>
+                    <p class="text-gray-700 font-medium mt-2">{{ item.product.name }} <span class="text-gray-500 text-sm">x{{ item.quantity }}</span></p>
+                    <div class="mt-3 flex items-center gap-2 text-green-600 text-sm">
+                        <i class="ri-checkbox-circle-line"></i>
+                        <span>Ready for pickup</span>
+                    </div>
+                </div>
+                {% endif %}
+            {% else %}
+                <div class="text-center py-12 text-gray-400">
+                    <i class="ri-inbox-line text-5xl mb-2"></i>
+                    <p>No ready items</p>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<audio id="notif-sound" src="https://actions.google.com/sounds/v1/alerts/beep_short.ogg"></audio>
+
 <script>
+let currentStation = '{{ station }}';
+let refreshInterval;
+let socket;
+
+function updateCounts() {
+    const pendingCount = document.querySelectorAll('#pending-items > div:not(.text-center)').length;
+    const preparingCount = document.querySelectorAll('#preparing-items > div:not(.text-center)').length;
+    const readyCount = document.querySelectorAll('#ready-items > div:not(.text-center)').length;
+    
+    document.getElementById('pending-count').innerText = pendingCount;
+    document.getElementById('preparing-count').innerText = preparingCount;
+    document.getElementById('ready-count').innerText = readyCount;
+    
+    document.getElementById('pending-badge').innerText = pendingCount;
+    document.getElementById('preparing-badge').innerText = preparingCount;
+    document.getElementById('ready-badge').innerText = readyCount;
+}
+
 function updateItem(itemId, status) {
+    const button = event.target.closest('button');
+    const originalText = button.innerHTML;
+    button.innerHTML = '<i class="ri-loader-4-line animate-spin"></i> Processing...';
+    button.disabled = true;
+    
     fetch(`/api/item/${itemId}/status/${status}/`, {
         method: "POST",
         headers: {
-            "X-CSRFToken": getCSRFToken()
+            "X-CSRFToken": getCSRFToken(),
+            "Content-Type": "application/json"
         }
     })
     .then(res => res.json())
-    .then(() => location.reload());
+    .then(() => {
+        showToast(`Item ${status === 'preparing' ? 'started' : 'marked ready'}!`, 'success');
+        refreshItems();
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showToast('Error updating item', 'error');
+    })
+    .finally(() => {
+        button.innerHTML = originalText;
+        button.disabled = false;
+    });
+}
+
+function refreshItems() {
+    fetch(window.location.href)
+        .then(res => res.text())
+        .then(html => {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            
+            const sections = ['pending-items', 'preparing-items', 'ready-items'];
+            let changed = false;
+            
+            sections.forEach(section => {
+                const newContent = doc.querySelector(`#${section}`);
+                const currentContent = document.getElementById(section);
+                if (newContent && currentContent && currentContent.innerHTML !== newContent.innerHTML) {
+                    currentContent.innerHTML = newContent.innerHTML;
+                    changed = true;
+                }
+            });
+            
+            if (changed) {
+                updateCounts();
+                playSound();
+            }
+        })
+        .catch(err => console.error("Refresh failed:", err));
+}
+
+function updateTime() {
+    const now = new Date();
+    document.getElementById('current-time').innerText = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function playSound() {
+    const audio = document.getElementById("notif-sound");
+    if (audio) {
+        audio.currentTime = 0;
+        audio.play().catch(() => {});
+    }
+}
+
+function showToast(message, type = 'success') {
+    const toastContainer = document.getElementById('toast-container');
+    const colors = {
+        success: 'bg-green-500',
+        error: 'bg-red-500',
+        info: 'bg-blue-500'
+    };
+    
+    const toast = document.createElement('div');
+    toast.className = `${colors[type]} text-white px-4 py-2 rounded-lg shadow-lg text-sm animate-fade-in`;
+    toast.textContent = message;
+    toastContainer.appendChild(toast);
+    
+    setTimeout(() => toast.remove(), 3000);
 }
 
 function getCSRFToken() {
@@ -94,6 +297,44 @@ function getCSRFToken() {
         .find(row => row.startsWith('csrftoken='))
         ?.split('=')[1];
 }
+
+// WebSocket connection for real-time updates
+function connectWebSocket() {
+    const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+    socket = new WebSocket(protocol + window.location.host + "/ws/notifications/");
+    
+    socket.onopen = () => {
+        console.log(`✅ ${currentStation} WebSocket connected`);
+    };
+    
+    socket.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        if (data.message?.includes("New order") || data.type === "new_order") {
+            refreshItems();
+            playSound();
+            showToast('New order received!', 'info');
+        }
+    };
+    
+    socket.onclose = () => {
+        console.warn(`🔌 ${currentStation} WebSocket disconnected, reconnecting...`);
+        setTimeout(connectWebSocket, 5000);
+    };
+    
+    socket.onerror = (error) => {
+        console.error("WebSocket error:", error);
+    };
+}
+
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+    updateTime();
+    setInterval(updateTime, 1000);
+    connectWebSocket();
+    refreshItems();
+    refreshInterval = setInterval(refreshItems, 10000);
+    updateCounts();
+});
 </script>
 
 {% endblock %}

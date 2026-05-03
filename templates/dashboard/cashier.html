@@ -1,74 +1,111 @@
-<!-- templates/dashboard/cashier.html - Complete with Payment History -->
+<!-- templates/dashboard/cashier.html - Modern Redesign with Payment History -->
 {% extends "base.html" %}
 
 {% block content %}
 
-<div class="container mx-auto px-4 py-6">
-    <h2 class="text-2xl font-bold mb-6">💰 Cashier Dashboard</h2>
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex justify-between items-center">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-800">💰 Cashier Dashboard</h1>
+            <p class="text-gray-500 mt-1">Process payments and manage transactions</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <div class="bg-white rounded-xl px-4 py-2 shadow-sm">
+                <i class="ri-time-line text-primary-500"></i>
+                <span id="current-time" class="text-sm text-gray-600 ml-2"></span>
+            </div>
+        </div>
+    </div>
     
     <!-- Tabs -->
-    <div class="border-b border-gray-200 mb-6">
+    <div class="border-b border-gray-200">
         <nav class="flex space-x-8">
             <button onclick="showTab('pending')" id="tab-pending" 
-                    class="py-2 px-1 border-b-2 border-green-500 text-green-600 font-medium">
-                Pending Payments
+                    class="py-3 px-1 border-b-2 border-primary-600 text-primary-600 font-medium transition">
+                <i class="ri-time-line mr-2"></i>Pending Payments
             </button>
             <button onclick="showTab('history')" id="tab-history" 
-                    class="py-2 px-1 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
-                Payment History
+                    class="py-3 px-1 border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition">
+                <i class="ri-history-line mr-2"></i>Payment History
             </button>
         </nav>
     </div>
     
     <!-- Summary Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-        <div class="bg-blue-100 rounded-lg p-4 text-center">
-            <p class="text-2xl font-bold" id="pending-count">{{ orders|length }}</p>
-            <p class="text-sm text-gray-600">Pending Payments</p>
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div class="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl p-5 text-white shadow-lg">
+            <div class="flex justify-between items-start">
+                <div>
+                    <p class="text-blue-100 text-sm">Pending Payments</p>
+                    <p class="text-3xl font-bold mt-1" id="pending-count">{{ orders|length }}</p>
+                </div>
+                <i class="ri-time-line text-3xl text-blue-200"></i>
+            </div>
         </div>
-        <div class="bg-green-100 rounded-lg p-4 text-center">
-            <p class="text-2xl font-bold" id="today-total">0</p>
-            <p class="text-sm text-gray-600">Today's Total</p>
+        <div class="bg-gradient-to-br from-green-500 to-green-600 rounded-2xl p-5 text-white shadow-lg">
+            <div class="flex justify-between items-start">
+                <div>
+                    <p class="text-green-100 text-sm">Today's Total</p>
+                    <p class="text-3xl font-bold mt-1" id="today-total">0</p>
+                </div>
+                <i class="ri-money-dollar-circle-line text-3xl text-green-200"></i>
+            </div>
         </div>
-        <div class="bg-yellow-100 rounded-lg p-4 text-center">
-            <p class="text-2xl font-bold" id="today-tips">0</p>
-            <p class="text-sm text-gray-600">Today's Tips</p>
+        <div class="bg-gradient-to-br from-yellow-500 to-orange-500 rounded-2xl p-5 text-white shadow-lg">
+            <div class="flex justify-between items-start">
+                <div>
+                    <p class="text-yellow-100 text-sm">Today's Tips</p>
+                    <p class="text-3xl font-bold mt-1" id="today-tips">0</p>
+                </div>
+                <i class="ri-heart-line text-3xl text-yellow-200"></i>
+            </div>
         </div>
-        <div class="bg-purple-100 rounded-lg p-4 text-center">
-            <p class="text-2xl font-bold" id="history-count">0</p>
-            <p class="text-sm text-gray-600">Today's Payments</p>
+        <div class="bg-gradient-to-br from-purple-500 to-purple-600 rounded-2xl p-5 text-white shadow-lg">
+            <div class="flex justify-between items-start">
+                <div>
+                    <p class="text-purple-100 text-sm">Today's Payments</p>
+                    <p class="text-3xl font-bold mt-1" id="history-count">0</p>
+                </div>
+                <i class="ri-receipt-line text-3xl text-purple-200"></i>
+            </div>
         </div>
-        <div class="bg-orange-100 rounded-lg p-4 text-center">
-            <p class="text-2xl font-bold" id="history-total">0</p>
-            <p class="text-sm text-gray-600">Today's Revenue</p>
+        <div class="bg-gradient-to-br from-orange-500 to-red-500 rounded-2xl p-5 text-white shadow-lg">
+            <div class="flex justify-between items-start">
+                <div>
+                    <p class="text-orange-100 text-sm">Today's Revenue</p>
+                    <p class="text-3xl font-bold mt-1" id="history-total">0</p>
+                </div>
+                <i class="ri-bar-chart-2-line text-3xl text-orange-200"></i>
+            </div>
         </div>
     </div>
     
     <!-- Pending Payments Tab -->
     <div id="pending-tab" class="tab-content">
-        <div class="bg-white rounded-lg shadow overflow-hidden">
+        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div class="overflow-x-auto">
                 <table class="min-w-full divide-y divide-gray-200">
                     <thead class="bg-gray-50">
                         <tr>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Order ID</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Table</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Waiter</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Items</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Subtotal</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tip</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Method</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Order ID</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Table</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Waiter</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Customer</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Items</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Subtotal</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Tip</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Total</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Method</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="orders-table-body" class="bg-white divide-y divide-gray-200">
                         {% for order_data in orders %}
-                        <tr id="order-row-{{ order_data.order.id }}" class="hover:bg-gray-50">
-                            <td class="px-4 py-3 text-sm font-medium text-gray-900">{{ order_data.order.id }}</td>
-                            <td class="px-4 py-3 text-sm text-gray-600">{{ order_data.table_number }}</td>
-                            <td class="px-4 py-3 text-sm text-gray-600">
+                        <tr id="order-row-{{ order_data.order.id }}" class="hover:bg-gray-50 transition">
+                            <td class="px-6 py-4 text-sm font-medium text-gray-900">{{ order_data.order.id }}</td>
+                            <td class="px-6 py-4 text-sm text-gray-600">{{ order_data.table_number }}</td>
+                            <td class="px-6 py-4 text-sm text-gray-600">
                                 {% if order_data.order.active_session %}
                                     {{ order_data.order.active_session.waiter.username|default:"N/A" }}
                                 {% elif order_data.order.session %}
@@ -77,71 +114,72 @@
                                     N/A
                                 {% endif %}
                             </td>
-                            <td class="px-4 py-3 text-sm text-gray-600">
+                            <td class="px-6 py-4 text-sm text-gray-600">
                                 {% if order_data.order.active_session and order_data.order.active_session.client %}
                                     {{ order_data.order.active_session.client.phone|default:"-" }}
                                 {% elif order_data.order.session and order_data.order.session.client %}
                                     {{ order_data.order.session.client.phone|default:"-" }}
                                 {% else %}
-                                    Walk-in
+                                    <span class="text-gray-400">Walk-in</span>
                                 {% endif %}
                             </td>
-                            <td class="px-4 py-3 text-sm text-gray-600">
-                                <button onclick="showItems({{ order_data.order.id }})" class="text-blue-600 hover:text-blue-800">
-                                    {{ order_data.items|length }} items
+                            <td class="px-6 py-4 text-sm text-gray-600">
+                                <button onclick="showItems({{ order_data.order.id }})" class="text-primary-600 hover:text-primary-800 font-medium">
+                                    <i class="ri-eye-line mr-1"></i>{{ order_data.items|length }} items
                                 </button>
                             </td>
-                            <td class="px-4 py-3 text-sm text-gray-600" id="subtotal-{{ order_data.order.id }}">
+                            <td class="px-6 py-4 text-sm text-gray-600" id="subtotal-{{ order_data.order.id }}">
                                 {{ order_data.subtotal }} ETB
                             </td>
-                            <td class="px-4 py-3">
+                            <td class="px-6 py-4">
                                 <input type="number" id="tip-{{ order_data.order.id }}" 
                                        value="0" step="1" min="0"
-                                       class="w-20 px-2 py-1 border rounded text-sm"
+                                       class="w-24 px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:border-primary-400 focus:ring-2 focus:ring-primary-200"
                                        onchange="updateTotal({{ order_data.order.id }}, {{ order_data.subtotal }})">
                             </td>
-                            <td class="px-4 py-3 text-sm font-semibold" id="total-{{ order_data.order.id }}">
+                            <td class="px-6 py-4 text-sm font-semibold text-gray-900" id="total-{{ order_data.order.id }}">
                                 {{ order_data.subtotal }} ETB
                             </td>
-                            <td class="px-4 py-3">
+                            <td class="px-6 py-4">
                                 <select id="method-{{ order_data.order.id }}" 
-                                        class="px-2 py-1 border rounded text-sm"
+                                        class="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:border-primary-400 focus:ring-2 focus:ring-primary-200"
                                         onchange="toggleProofSection({{ order_data.order.id }})">
                                     <option value="cash">💵 Cash</option>
                                     <option value="pos">💳 POS Card</option>
                                     <option value="digital">📱 Digital</option>
                                 </select>
                             </td>
-                            <td class="px-4 py-3">
+                            <td class="px-6 py-4">
                                 <div class="flex gap-2">
                                     <button onclick="processPayment({{ order_data.order.id }}, {{ order_data.subtotal }})"
-                                            class="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700">
-                                        Pay
+                                            class="bg-primary-600 hover:bg-primary-700 text-white px-4 py-1.5 rounded-lg text-sm font-medium transition flex items-center gap-1">
+                                        <i class="ri-money-dollar-circle-line"></i> Pay
                                     </button>
                                     <button onclick="viewDetails({{ order_data.order.id }})"
-                                            class="bg-gray-500 text-white px-3 py-1 rounded text-sm hover:bg-gray-600">
-                                        Details
+                                            class="bg-gray-500 hover:bg-gray-600 text-white px-3 py-1.5 rounded-lg text-sm transition flex items-center gap-1">
+                                        <i class="ri-information-line"></i>
                                     </button>
                                 </div>
                             </td>
                         </tr>
                         <tr id="proof-row-{{ order_data.order.id }}" class="hidden bg-gray-50">
-                            <td colspan="10" class="px-4 py-3">
+                            <td colspan="10" class="px-6 py-4">
                                 <div class="flex items-center gap-4">
-                                    <span class="text-sm font-medium">Payment Proof:</span>
+                                    <span class="text-sm font-medium text-gray-700"><i class="ri-image-line mr-1"></i>Payment Proof:</span>
                                     <input type="file" id="proof-{{ order_data.order.id }}" 
-                                           accept="image/*" class="text-sm">
+                                           accept="image/*" class="text-sm text-gray-600">
                                     <input type="text" id="proof-ref-{{ order_data.order.id }}" 
                                            placeholder="Transaction Reference" 
-                                           class="px-2 py-1 border rounded text-sm w-64">
-                                    <span class="text-xs text-gray-500">Required for digital payments</span>
+                                           class="px-3 py-1.5 border border-gray-200 rounded-lg text-sm w-64">
+                                    <span class="text-xs text-gray-400">Required for digital payments</span>
                                 </div>
                             </td>
                         </tr>
                         {% empty %}
                         <tr>
-                            <td colspan="10" class="px-4 py-8 text-center text-gray-500">
-                                No pending payments at this time
+                            <td colspan="10" class="px-6 py-12 text-center text-gray-400">
+                                <i class="ri-inbox-line text-5xl mb-2"></i>
+                                <p>No pending payments at this time</p>
                             </td>
                         </tr>
                         {% endfor %}
@@ -153,28 +191,29 @@
     
     <!-- Payment History Tab -->
     <div id="history-tab" class="tab-content hidden">
-        <div class="bg-white rounded-lg shadow overflow-hidden">
+        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div class="overflow-x-auto">
                 <table class="min-w-full divide-y divide-gray-200">
                     <thead class="bg-gray-50">
                         <tr>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Order ID</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Table</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Waiter</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Items</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Subtotal</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tip</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Method</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cashier</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Time</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Order ID</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Table</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Waiter</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Items</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Subtotal</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Tip</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Total</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Method</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Cashier</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
                         </tr>
                     </thead>
                     <tbody id="history-table-body" class="bg-white divide-y divide-gray-200">
                         <tr>
-                            <td colspan="11" class="px-4 py-8 text-center text-gray-500">
-                                Loading payment history...
+                            <td colspan="11" class="px-6 py-12 text-center text-gray-400">
+                                <i class="ri-loader-4-line animate-spin text-2xl mb-2"></i>
+                                <p>Loading payment history...</p>
                             </td>
                         </tr>
                     </tbody>
@@ -183,19 +222,19 @@
         </div>
         
         <!-- History Filters -->
-        <div class="mt-4 flex gap-4 justify-end">
-            <select id="history-filter" onchange="loadPaymentHistory()" class="px-3 py-1 border rounded text-sm">
+        <div class="mt-4 flex flex-wrap gap-3 justify-end">
+            <select id="history-filter" onchange="loadPaymentHistory()" class="px-4 py-2 border border-gray-200 rounded-xl text-sm focus:border-primary-400">
                 <option value="today">Today</option>
                 <option value="yesterday">Yesterday</option>
                 <option value="week">Last 7 Days</option>
                 <option value="month">This Month</option>
                 <option value="all">All Time</option>
             </select>
-            <button onclick="exportPaymentHistory()" class="bg-blue-500 text-white px-3 py-1 rounded text-sm hover:bg-blue-600">
-                📥 Export CSV
+            <button onclick="exportPaymentHistory()" class="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-xl text-sm transition flex items-center gap-2">
+                <i class="ri-download-line"></i> Export CSV
             </button>
-            <button onclick="printReport()" class="bg-gray-500 text-white px-3 py-1 rounded text-sm hover:bg-gray-600">
-                🖨️ Print Report
+            <button onclick="printReport()" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-xl text-sm transition flex items-center gap-2">
+                <i class="ri-printer-line"></i> Print Report
             </button>
         </div>
     </div>
@@ -203,14 +242,20 @@
 
 <!-- Items Modal -->
 <div id="items-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
-    <div class="bg-white rounded-lg max-w-md w-full mx-4">
-        <div class="flex justify-between items-center p-4 border-b">
-            <h3 class="text-lg font-bold">Order Items</h3>
-            <button onclick="closeModal()" class="text-gray-500 hover:text-gray-700">✕</button>
+    <div class="bg-white rounded-2xl max-w-md w-full mx-4 animate-fade-in">
+        <div class="flex justify-between items-center p-5 border-b">
+            <h3 class="text-xl font-bold flex items-center gap-2">
+                <i class="ri-shopping-bag-line text-primary-600"></i> Order Items
+            </h3>
+            <button onclick="closeModal()" class="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center">
+                <i class="ri-close-line text-gray-600"></i>
+            </button>
         </div>
-        <div id="modal-items" class="p-4 max-h-96 overflow-y-auto"></div>
-        <div class="p-4 border-t">
-            <button onclick="closeModal()" class="w-full bg-gray-500 text-white py-2 rounded">Close</button>
+        <div id="modal-items" class="p-5 max-h-96 overflow-y-auto space-y-2"></div>
+        <div class="p-5 border-t">
+            <button onclick="closeModal()" class="w-full bg-gray-600 hover:bg-gray-700 text-white py-2.5 rounded-xl font-medium transition">
+                Close
+            </button>
         </div>
     </div>
 </div>
@@ -231,16 +276,16 @@ function showTab(tab) {
     if (tab === 'pending') {
         pendingTab.classList.remove('hidden');
         historyTab.classList.add('hidden');
-        tabPending.classList.add('border-green-500', 'text-green-600');
+        tabPending.classList.add('border-primary-600', 'text-primary-600');
         tabPending.classList.remove('border-transparent', 'text-gray-500');
-        tabHistory.classList.remove('border-green-500', 'text-green-600');
+        tabHistory.classList.remove('border-primary-600', 'text-primary-600');
         tabHistory.classList.add('border-transparent', 'text-gray-500');
     } else {
         pendingTab.classList.add('hidden');
         historyTab.classList.remove('hidden');
-        tabHistory.classList.add('border-green-500', 'text-green-600');
+        tabHistory.classList.add('border-primary-600', 'text-primary-600');
         tabHistory.classList.remove('border-transparent', 'text-gray-500');
-        tabPending.classList.remove('border-green-500', 'text-green-600');
+        tabPending.classList.remove('border-primary-600', 'text-primary-600');
         tabPending.classList.add('border-transparent', 'text-gray-500');
         loadPaymentHistory();
     }
@@ -258,37 +303,32 @@ async function loadPaymentHistory() {
         
         if (data.payments && data.payments.length > 0) {
             tbody.innerHTML = data.payments.map(payment => `
-                <tr class="hover:bg-gray-50">
-                    <td class="px-4 py-3 text-sm text-gray-600">${new Date(payment.created_at).toLocaleString()}</td>
-                    <td class="px-4 py-3 text-sm font-medium text-gray-900">${payment.order_id}</td>
-                    <td class="px-4 py-3 text-sm text-gray-600">${payment.table_number}</td>
-                    <td class="px-4 py-3 text-sm text-gray-600">${payment.waiter_name || 'N/A'}</td>
-                    <td class="px-4 py-3 text-sm text-gray-600">
-                        <button onclick="showHistoryItems(${payment.order_id})" class="text-blue-600 hover:text-blue-800">
+                <tr class="hover:bg-gray-50 transition">
+                    <td class="px-6 py-4 text-sm text-gray-600">${new Date(payment.created_at).toLocaleString()}</td>
+                    <td class="px-6 py-4 text-sm font-medium text-gray-900">${payment.order_id}</td>
+                    <td class="px-6 py-4 text-sm text-gray-600">${payment.table_number}</td>
+                    <td class="px-6 py-4 text-sm text-gray-600">${payment.waiter_name || 'N/A'}</td>
+                    <td class="px-6 py-4 text-sm text-gray-600">
+                        <button onclick="showHistoryItems(${payment.order_id})" class="text-primary-600 hover:text-primary-800">
                             ${payment.item_count} items
                         </button>
                     </td>
-                    <td class="px-4 py-3 text-sm text-gray-600">${payment.subtotal} ETB</td>
-                    <td class="px-4 py-3 text-sm text-green-600 font-medium">${payment.tip} ETB</td>
-                    <td class="px-4 py-3 text-sm font-bold">${payment.total} ETB</td>
-                    <td class="px-4 py-3 text-sm text-gray-600">${payment.method}</td>
-                    <td class="px-4 py-3 text-sm text-gray-600">${payment.cashier_name}</td>
-                    <td class="px-4 py-3">
-                        <span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">${payment.status}</span>
+                    <td class="px-6 py-4 text-sm text-gray-600">${payment.subtotal} ETB</td>
+                    <td class="px-6 py-4 text-sm text-green-600 font-medium">${payment.tip} ETB</td>
+                    <td class="px-6 py-4 text-sm font-bold text-gray-900">${payment.total} ETB</td>
+                    <td class="px-6 py-4 text-sm text-gray-600">${payment.method}</td>
+                    <td class="px-6 py-4 text-sm text-gray-600">${payment.cashier_name}</td>
+                    <td class="px-6 py-4">
+                        <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-green-100 text-green-700 text-xs"><i class="ri-checkbox-circle-line"></i> ${payment.status}</span>
                     </td>
                 </tr>
             `).join('');
             
-            // Update summary
             document.getElementById('history-count').innerText = data.summary.count;
             document.getElementById('history-total').innerText = data.summary.total.toFixed(2);
         } else {
             tbody.innerHTML = `
-                <tr>
-                    <td colspan="11" class="px-4 py-8 text-center text-gray-500">
-                        No payment records found for this period
-                    </td>
-                </tr>
+                <tr><td colspan="11" class="px-6 py-12 text-center text-gray-400"><i class="ri-inbox-line text-5xl mb-2"></i><p>No payment records found for this period</p></td></tr>
             `;
         }
     } catch (err) {
@@ -301,26 +341,21 @@ async function exportPaymentHistory() {
     window.location.href = `/payments/export/?filter=${filter}`;
 }
 
-function printReport() {
-    window.print();
-}
+function printReport() { window.print(); }
 
 function showHistoryItems(orderId) {
-    // Fetch and show items for history order
     fetch(`/order/${orderId}/details/`)
         .then(response => response.json())
         .then(data => {
             if (data.status === 'ok') {
                 const modal = document.getElementById('items-modal');
                 const container = document.getElementById('modal-items');
-                
                 container.innerHTML = data.order.items.map(item => `
-                    <div class="flex justify-between py-2 border-b">
+                    <div class="flex justify-between py-2 border-b last:border-0">
                         <span>${item.quantity}x ${item.product}</span>
-                        <span>${(item.price * item.quantity).toFixed(2)} ETB</span>
+                        <span class="font-semibold">${(item.price * item.quantity).toFixed(2)} ETB</span>
                     </div>
                 `).join('');
-                
                 modal.classList.remove('hidden');
                 modal.classList.add('flex');
             }
@@ -331,25 +366,16 @@ function showHistoryItems(orderId) {
 function updateTotal(orderId, subtotal) {
     const tipInput = document.getElementById(`tip-${orderId}`);
     const totalSpan = document.getElementById(`total-${orderId}`);
-    
     if (tipInput && totalSpan) {
         const tip = parseFloat(tipInput.value) || 0;
-        const total = subtotal + tip;
-        totalSpan.innerText = total.toFixed(2) + ' ETB';
+        totalSpan.innerText = (subtotal + tip).toFixed(2) + ' ETB';
     }
 }
 
 function toggleProofSection(orderId) {
     const method = document.getElementById(`method-${orderId}`).value;
     const proofRow = document.getElementById(`proof-row-${orderId}`);
-    
-    if (proofRow) {
-        if (method === 'digital') {
-            proofRow.classList.remove('hidden');
-        } else {
-            proofRow.classList.add('hidden');
-        }
-    }
+    if (proofRow) proofRow.classList.toggle('hidden', method !== 'digital');
 }
 
 function showItems(orderId) {
@@ -357,23 +383,18 @@ function showItems(orderId) {
     if (items) {
         const modal = document.getElementById('items-modal');
         const container = document.getElementById('modal-items');
-        
         container.innerHTML = items.map(item => `
-            <div class="flex justify-between py-2 border-b">
+            <div class="flex justify-between py-2 border-b last:border-0">
                 <span>${item.quantity}x ${item.product_name}</span>
-                <span>${(item.price * item.quantity).toFixed(2)} ETB</span>
+                <span class="font-semibold">${(item.price * item.quantity).toFixed(2)} ETB</span>
             </div>
         `).join('');
-        
         modal.classList.remove('hidden');
         modal.classList.add('flex');
     }
 }
 
-function viewDetails(orderId) {
-    showItems(orderId);
-}
-
+function viewDetails(orderId) { showItems(orderId); }
 function closeModal() {
     const modal = document.getElementById('items-modal');
     modal.classList.add('hidden');
@@ -388,13 +409,13 @@ async function processPayment(orderId, subtotal) {
     const proofRef = document.getElementById(`proof-ref-${orderId}`)?.value || '';
     
     if (method === 'digital' && !proofFile && !proofRef) {
-        alert('Please provide payment proof (screenshot or transaction reference)');
+        showToast('Please provide payment proof', 'error');
         return;
     }
     
-    const button = event.target;
-    const originalText = button.innerText;
-    button.innerText = 'Processing...';
+    const button = event.target.closest('button');
+    const originalText = button.innerHTML;
+    button.innerHTML = '<i class="ri-loader-4-line animate-spin"></i>';
     button.disabled = true;
     
     const formData = new FormData();
@@ -410,10 +431,9 @@ async function processPayment(orderId, subtotal) {
             headers: { 'X-CSRFToken': getCSRFToken() },
             body: formData
         });
-        
         const data = await response.json();
         
-        if (data.status === 'approved' || (data.status === 'created' && method == 'cash' && approveData.status === 'approved')) {
+        if (data.status === 'approved') {
             showToast(`✅ Payment completed!`, 'success');
             removeOrderRow(orderId);
             updateSummaryTotals();
@@ -426,7 +446,7 @@ async function processPayment(orderId, subtotal) {
                 });
                 const approveData = await approveResponse.json();
                 if (approveData.status === 'approved') {
-                    showToast(`✅ Payment approved! Tip: ${data.tip} ETB added to waiter`, 'success');
+                    showToast(`✅ Payment approved! Tip: ${data.tip} ETB`, 'success');
                     removeOrderRow(orderId);
                     updateSummaryTotals();
                 }
@@ -442,47 +462,32 @@ async function processPayment(orderId, subtotal) {
     } catch (err) {
         showToast('❌ Payment processing error', 'error');
     } finally {
-        button.innerText = originalText;
+        button.innerHTML = originalText;
         button.disabled = false;
     }
 }
 
 function removeOrderRow(orderId) {
-    const row = document.getElementById(`order-row-${orderId}`);
-    const proofRow = document.getElementById(`proof-row-${orderId}`);
-    if (row) row.remove();
-    if (proofRow) proofRow.remove();
-    
+    document.getElementById(`order-row-${orderId}`)?.remove();
+    document.getElementById(`proof-row-${orderId}`)?.remove();
     const tbody = document.getElementById('orders-table-body');
-    if (tbody.children.length === 0) {
-        tbody.innerHTML = `
-            <tr><td colspan="10" class="px-4 py-8 text-center text-gray-500">No pending payments at this time</td></tr>
-        `;
+    const remainingRows = tbody.querySelectorAll('tr[id^="order-row-"]').length;
+    if (remainingRows === 0) {
+        tbody.innerHTML = '<tr><td colspan="10" class="px-6 py-12 text-center text-gray-400"><i class="ri-inbox-line text-5xl mb-2"></i><p>No pending payments at this time</p></td></tr>';
     }
-    document.getElementById('pending-count').innerText = tbody.children.length;
+    document.getElementById('pending-count').innerText = remainingRows;
 }
 
 async function updateSummaryTotals() {
-    // Get today's completed payments from the server
     try {
         const response = await fetch('/payments/today-summary/');
         const data = await response.json();
-        
         document.getElementById('today-total').innerText = data.total.toFixed(2);
         document.getElementById('today-tips').innerText = data.tips.toFixed(2);
     } catch (err) {
-        console.error('Error fetching summary:', err);
-        // Fallback to calculating from pending orders only
-        let total = 0;
-        let tips = 0;
-        
-        document.querySelectorAll('[id^="subtotal-"]').forEach(el => {
-            total += parseFloat(el.innerText) || 0;
-        });
-        document.querySelectorAll('[id^="tip-"]').forEach(el => {
-            tips += parseFloat(el.value) || 0;
-        });
-        
+        let total = 0, tips = 0;
+        document.querySelectorAll('[id^="subtotal-"]').forEach(el => total += parseFloat(el.innerText) || 0);
+        document.querySelectorAll('[id^="tip-"]').forEach(el => tips += parseFloat(el.value) || 0);
         document.getElementById('today-total').innerText = (total + tips).toFixed(2);
         document.getElementById('today-tips').innerText = tips.toFixed(2);
     }
@@ -492,7 +497,6 @@ async function updateSummaryTotals() {
 function connectSocket() {
     const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
     socket = new WebSocket(protocol + window.location.host + "/ws/notifications/");
-    
     socket.onmessage = (e) => {
         const data = JSON.parse(e.data);
         if (data.type === "order_ready" || data.type === "order_ready_for_payment") {
@@ -507,28 +511,29 @@ function connectSocket() {
 function showToast(message, type) {
     const colors = { success: 'bg-green-500', error: 'bg-red-500', info: 'bg-blue-500', warning: 'bg-yellow-500' };
     const toast = document.createElement('div');
-    toast.className = `fixed bottom-4 right-4 ${colors[type]} text-white px-4 py-2 rounded shadow-lg z-50`;
-    toast.textContent = message;
+    toast.className = `fixed bottom-4 right-4 ${colors[type]} text-white px-5 py-3 rounded-xl shadow-lg z-50 flex items-center gap-2 animate-fade-in`;
+    toast.innerHTML = `<i class="${type === 'success' ? 'ri-checkbox-circle-line' : 'ri-alert-line'}"></i>${message}`;
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 3000);
 }
 
-function playSound() {
-    const audio = document.getElementById("notif-sound");
-    if (audio) audio.play().catch(() => {});
-}
-
-function getCSRFToken() {
-    return document.cookie.split('; ').find(row => row.startsWith('csrftoken='))?.split('=')[1];
-}
+function playSound() { document.getElementById("notif-sound")?.play().catch(() => {}); }
+function getCSRFToken() { return document.cookie.split('; ').find(row => row.startsWith('csrftoken='))?.split('=')[1]; }
 
 // Store order items
 {% for order_data in orders %}
 currentOrderItems[{{ order_data.order.id }}] = [{% for item in order_data.items %}{product_name: "{{ item.product.name }}", quantity: {{ item.quantity }}, price: {{ item.price_at_time }} },{% endfor %}];
 {% endfor %}
 
+function updateTime() {
+    const now = new Date();
+    document.getElementById('current-time').innerText = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+    updateTime();
+    setInterval(updateTime, 1000);
     connectSocket();
     updateSummaryTotals();
 });
@@ -536,10 +541,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
 <style>
 .hidden { display: none; }
+.animate-fade-in { animation: fadeIn 0.3s ease-in-out; }
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
 @media print {
     .tab-content.hidden { display: block !important; }
     #pending-tab { display: none !important; }
-    nav, .bg-blue-100, .bg-green-100, .bg-yellow-100, .bg-purple-100, .bg-orange-100, button, select, input { display: none !important; }
+    nav, .bg-gradient-to-br, button, select, input { display: none !important; }
 }
 </style>
 

@@ -1,35 +1,68 @@
+<!-- templates/dashboard/create_order.html -->
 {% extends "base.html" %}
 
 {% block content %}
 
-<h2 class="text-xl font-bold mb-4">
-    Create Order — Table {{ session.table.number }}
-</h2>
-
-<form method="POST">
-    {% csrf_token %}
-
-    <div class="space-y-3">
-
-        {% for product in products %}
-            <div class="flex justify-between items-center bg-white p-3 rounded shadow">
-                <span>{{ product.name }}</span>
-
-                <input type="number"
-                       name="product_{{ product.id }}"
-                       value="0"
-                       min="0"
-                       class="w-20 border rounded px-2 py-1">
+<div class="max-w-4xl mx-auto">
+    <!-- Header -->
+    <div class="mb-8">
+        <div class="flex items-center gap-3 mb-2">
+            <div class="w-12 h-12 bg-gradient-to-r from-primary-500 to-primary-600 rounded-2xl flex items-center justify-center shadow-lg">
+                <i class="ri-shopping-cart-2-line text-white text-2xl"></i>
             </div>
-        {% endfor %}
-
+            <div>
+                <h1 class="text-3xl font-bold text-gray-800">Create Order</h1>
+                <p class="text-gray-500 mt-1">Table {{ session.table.number }} • Session #{{ session.id }}</p>
+            </div>
+        </div>
     </div>
 
-    <button type="submit"
-        class="mt-4 bg-green-600 text-white px-4 py-2 rounded">
-        Submit Order
-    </button>
+    <!-- Order Form -->
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <form method="POST" class="p-6">
+            {% csrf_token %}
+            
+            <div class="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+                {% for product in products %}
+                <div class="flex justify-between items-center p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition">
+                    <div>
+                        <h3 class="font-semibold text-gray-800">{{ product.name }}</h3>
+                        <p class="text-primary-600 font-medium text-sm mt-1">{{ product.price }} ETB</p>
+                    </div>
+                    <input type="number"
+                           name="product_{{ product.id }}"
+                           value="0"
+                           min="0"
+                           class="w-24 px-3 py-2 border border-gray-200 rounded-lg text-center focus:border-primary-400 focus:ring-2 focus:ring-primary-200">
+                </div>
+                {% endfor %}
+            </div>
+            
+            <div class="mt-6 pt-4 border-t flex gap-3">
+                <button type="submit"
+                        class="flex-1 bg-primary-600 hover:bg-primary-700 text-white px-6 py-3 rounded-xl font-semibold transition flex items-center justify-center gap-2">
+                    <i class="ri-send-plane-line"></i> Submit Order
+                </button>
+                <a href="{% url 'waiter_dashboard' %}"
+                   class="px-6 py-3 bg-gray-500 hover:bg-gray-600 text-white rounded-xl font-semibold transition flex items-center gap-2">
+                    <i class="ri-arrow-go-back-line"></i> Cancel
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
 
-</form>
+<script>
+// Add keyboard navigation
+document.querySelectorAll('input[type="number"]').forEach(input => {
+    input.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const form = this.closest('form');
+            if (form) form.submit();
+        }
+    });
+});
+</script>
 
 {% endblock %}

@@ -55,3 +55,7 @@ htmlcov/
 nosetests.xml
 coverage.xml
 *.cover
+node_modules/
+npm-debug.log
+package-lock.json
+static/css/output.css

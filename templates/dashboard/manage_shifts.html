@@ -3,15 +3,27 @@
 
 {% block content %}
 
-<div class="container mx-auto px-4 py-6">
-    <h2 class="text-2xl font-bold mb-6">📋 Shift & Table Management</h2>
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center gap-3">
+        <div class="w-12 h-12 bg-gradient-to-r from-primary-500 to-primary-600 rounded-2xl flex items-center justify-center shadow-lg">
+            <i class="ri-calendar-line text-white text-2xl"></i>
+        </div>
+        <div>
+            <h1 class="text-3xl font-bold text-gray-800">Shift & Table Management</h1>
+            <p class="text-gray-500 mt-1">Assign waiters to tables for each shift</p>
+        </div>
+    </div>
     
     <!-- Messages -->
     {% if messages %}
-        <div class="mb-4">
+        <div class="space-y-2">
             {% for message in messages %}
-                <div class="p-3 rounded {% if message.tags == 'success' %}bg-green-100 text-green-700{% elif message.tags == 'error' %}bg-red-100 text-red-700{% else %}bg-blue-100 text-blue-700{% endif %}">
-                    {{ message }}
+                <div class="p-4 rounded-xl {% if message.tags == 'success' %}bg-green-50 text-green-700 border-l-4 border-green-500{% elif message.tags == 'error' %}bg-red-50 text-red-700 border-l-4 border-red-500{% else %}bg-blue-50 text-blue-700 border-l-4 border-blue-500{% endif %}">
+                    <div class="flex items-center gap-2">
+                        <i class="{% if message.tags == 'success' %}ri-checkbox-circle-line{% elif message.tags == 'error' %}ri-alert-line{% else %}ri-information-line{% endif %} text-xl"></i>
+                        <p>{{ message }}</p>
+                    </div>
                 </div>
             {% endfor %}
         </div>
@@ -19,15 +31,21 @@
     
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <!-- Create New Shift -->
-        <div class="bg-white rounded-lg shadow p-6">
-            <h3 class="text-lg font-bold mb-4">Assign Waiter to Tables</h3>
+        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="bg-gradient-to-r from-primary-500 to-primary-600 px-6 py-4">
+                <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                    <i class="ri-user-add-line"></i> Assign Waiter to Tables
+                </h3>
+            </div>
             
-            <form method="POST" action="{% url 'create_shift' %}">
+            <form method="POST" action="{% url 'create_shift' %}" class="p-6 space-y-5">
                 {% csrf_token %}
                 
-                <div class="mb-4">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Select Waiter *</label>
-                    <select name="employee_id" required class="w-full rounded-md border-gray-300 shadow-sm p-2 border">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
+                        <i class="ri-user-line text-gray-400"></i> Select Waiter *
+                    </label>
+                    <select name="employee_id" required class="w-full rounded-xl border-gray-200 shadow-sm p-3 border focus:border-primary-400 focus:ring-2 focus:ring-primary-200">
                         <option value="">-- Select Waiter --</option>
                         {% for emp in employees %}
                             <option value="{{ emp.id }}">{{ emp.username }} ({{ emp.get_full_name|default:emp.username }})</option>
@@ -35,141 +53,165 @@
                     </select>
                 </div>
                 
-                <div class="mb-4">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Shift Date *</label>
-                    <input type="date" name="shift_date" value="{{ today|date:'Y-m-d' }}" required class="w-full rounded-md border-gray-300 shadow-sm p-2 border">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
+                        <i class="ri-calendar-line text-gray-400"></i> Shift Date *
+                    </label>
+                    <input type="date" name="shift_date" value="{{ today|date:'Y-m-d' }}" required class="w-full rounded-xl border-gray-200 shadow-sm p-3 border focus:border-primary-400 focus:ring-2 focus:ring-primary-200">
                 </div>
                 
-                <div class="mb-4">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Shift Type</label>
-                    <select name="shift_type" class="w-full rounded-md border-gray-300 shadow-sm p-2 border" id="shift_type">
-                        <option value="morning">Morning Shift (08:00 - 14:00)</option>
-                        <option value="afternoon">Afternoon Shift (14:00 - 20:00)</option>
-                        <option value="evening">Evening Shift (20:00 - 02:00)</option>
-                        <option value="custom">Custom Shift</option>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
+                        <i class="ri-time-line text-gray-400"></i> Shift Type
+                    </label>
+                    <select name="shift_type" class="w-full rounded-xl border-gray-200 shadow-sm p-3 border focus:border-primary-400 focus:ring-2 focus:ring-primary-200" id="shift_type">
+                        <option value="morning">🌅 Morning Shift (08:00 - 14:00)</option>
+                        <option value="afternoon">☀️ Afternoon Shift (14:00 - 20:00)</option>
+                        <option value="evening">🌙 Evening Shift (20:00 - 02:00)</option>
+                        <option value="custom">⚙️ Custom Shift</option>
                     </select>
                 </div>
                 
-                <div id="custom-time-section" class="mb-4 hidden">
+                <div id="custom-time-section" class="hidden space-y-3">
                     <div class="grid grid-cols-2 gap-3">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Start Time</label>
-                            <input type="time" name="start_time" class="w-full rounded-md border-gray-300 shadow-sm p-2 border">
+                            <input type="time" name="start_time" class="w-full rounded-xl border-gray-200 shadow-sm p-3 border">
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">End Time</label>
-                            <input type="time" name="end_time" class="w-full rounded-md border-gray-300 shadow-sm p-2 border">
+                            <input type="time" name="end_time" class="w-full rounded-xl border-gray-200 shadow-sm p-3 border">
                         </div>
                     </div>
                 </div>
                 
-                <div class="mb-4">
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Tables to Assign *</label>
-                    <div class="border rounded-lg p-3 max-h-80 overflow-y-auto">
-                        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
+                        <i class="ri-table-line text-gray-400"></i> Tables to Assign *
+                    </label>
+                    <div class="border border-gray-200 rounded-xl p-4 max-h-80 overflow-y-auto bg-gray-50">
+                        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
                             {% for table in tables %}
-                                <label class="flex items-center space-x-2 cursor-pointer hover:bg-gray-50 p-1 rounded">
-                                    <input type="checkbox" name="table_ids" value="{{ table.id }}" class="rounded">
-                                    <span class="text-sm">Table {{ table.number }}</span>
+                                <label class="flex items-center space-x-2 cursor-pointer hover:bg-white p-2 rounded-lg transition">
+                                    <input type="checkbox" name="table_ids" value="{{ table.id }}" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500">
+                                    <span class="text-sm text-gray-700">Table {{ table.number }}</span>
                                 </label>
                             {% endfor %}
                         </div>
                     </div>
-                    <p class="text-xs text-gray-500 mt-1">Select one or more tables for this waiter</p>
+                    <p class="text-xs text-gray-400 mt-2">Select one or more tables for this waiter</p>
                 </div>
                 
-                <button type="submit" class="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition">
-                    ✅ Create Shift Assignment
+                <button type="submit" class="w-full bg-primary-600 hover:bg-primary-700 text-white py-3 rounded-xl font-semibold transition flex items-center justify-center gap-2">
+                    <i class="ri-check-line"></i> Create Shift Assignment
                 </button>
             </form>
         </div>
         
         <!-- Today's Active Shifts -->
-        <div class="bg-white rounded-lg shadow p-6">
-            <h3 class="text-lg font-bold mb-4">Today's Active Shifts</h3>
-            
-            {% if today_shifts %}
-                {% for shift_data in today_shifts %}
-                    <div class="border rounded-lg p-4 mb-3 hover:shadow-md transition">
-                        <div class="flex justify-between items-start">
-                            <div>
-                                <p class="font-bold text-lg">{{ shift_data.shift.employee.username }}</p>
-                                <p class="text-sm text-gray-600">{{ shift_data.shift.get_shift_type_display }}</p>
-                                {% if shift_data.shift.start_time %}
-                                    <p class="text-xs text-gray-500">
-                                        {{ shift_data.shift.start_time|time:"H:i" }} - {{ shift_data.shift.end_time|time:"H:i" }}
+        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="bg-gradient-to-r from-green-500 to-emerald-600 px-6 py-4">
+                <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                    <i class="ri-calendar-check-line"></i> Today's Active Shifts
+                </h3>
+            </div>
+            <div class="p-6 space-y-4 max-h-[600px] overflow-y-auto">
+                {% if today_shifts %}
+                    {% for shift_data in today_shifts %}
+                        <div class="border border-gray-200 rounded-xl p-4 hover:shadow-md transition">
+                            <div class="flex justify-between items-start">
+                                <div>
+                                    <p class="font-bold text-gray-800 flex items-center gap-2">
+                                        <i class="ri-user-line text-primary-600"></i>
+                                        {{ shift_data.shift.employee.username }}
                                     </p>
-                                {% endif %}
-                            </div>
-                            <div class="text-right">
-                                <span class="inline-block px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">
-                                    📊 {{ shift_data.table_count }} tables
-                                </span>
-                                <a href="{% url 'end_shift' shift_data.shift.id %}" 
-                                   class="block mt-2 text-sm text-red-600 hover:text-red-800"
-                                   onclick="return confirm('End this shift? This will close all active table sessions.')">
-                                    ⏹️ End Shift
-                                </a>
-                            </div>
-                        </div>
-                        
-                        <div class="mt-3 pt-2 border-t">
-                            <p class="text-xs font-semibold text-gray-600 mb-2">Assigned Tables:</p>
-                            <div class="flex flex-wrap gap-2">
-                                {% for table_num in shift_data.assigned_tables %}
-                                    <span class="inline-flex items-center px-2 py-1 text-xs bg-gray-100 rounded-full">
-                                        🪑 Table {{ table_num }}
+                                    <p class="text-sm text-gray-500 mt-1 flex items-center gap-1">
+                                        <i class="ri-time-line"></i> {{ shift_data.shift.get_shift_type_display }}
+                                    </p>
+                                    {% if shift_data.shift.start_time %}
+                                        <p class="text-xs text-gray-400 mt-1">
+                                            {{ shift_data.shift.start_time|time:"H:i" }} - {{ shift_data.shift.end_time|time:"H:i" }}
+                                        </p>
+                                    {% endif %}
+                                </div>
+                                <div class="text-right">
+                                    <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-green-100 text-green-700 text-xs">
+                                        <i class="ri-table-line"></i> {{ shift_data.table_count }} tables
                                     </span>
-                                {% endfor %}
+                                    <a href="{% url 'end_shift' shift_data.shift.id %}" 
+                                       class="flex items-center gap-1 mt-2 text-sm text-red-600 hover:text-red-700 transition"
+                                       onclick="return confirm('End this shift? This will close all active table sessions.')">
+                                        <i class="ri-stop-circle-line"></i> End Shift
+                                    </a>
+                                </div>
+                            </div>
+                            
+                            <div class="mt-3 pt-3 border-t">
+                                <p class="text-xs font-semibold text-gray-500 mb-2">Assigned Tables:</p>
+                                <div class="flex flex-wrap gap-2">
+                                    {% for table_num in shift_data.assigned_tables %}
+                                        <span class="inline-flex items-center gap-1 px-2 py-1 text-xs bg-gray-100 rounded-full text-gray-600">
+                                            <i class="ri-table-line"></i> {{ table_num }}
+                                        </span>
+                                    {% endfor %}
+                                </div>
                             </div>
                         </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="text-center py-12 text-gray-400">
+                        <i class="ri-calendar-line text-5xl mb-2"></i>
+                        <p>No shifts assigned for today</p>
                     </div>
-                {% endfor %}
-            {% else %}
-                <div class="text-center py-8 text-gray-500">
-                    No shifts assigned for today
-                </div>
-            {% endif %}
+                {% endif %}
+            </div>
         </div>
     </div>
     
     <!-- Currently Active Table Sessions -->
-    <div class="mt-6 bg-white rounded-lg shadow p-6">
-        <h3 class="text-lg font-bold mb-4">🪑 Currently Active Table Sessions</h3>
-        
-        {% if active_sessions %}
-            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                {% for session in active_sessions %}
-                    <div class="border rounded-lg p-3 {% if session.is_client_identified %}bg-blue-50{% endif %}">
-                        <div class="flex justify-between items-center">
-                            <span class="font-bold text-lg">Table {{ session.table.number }}</span>
-                            <span class="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="bg-gradient-to-r from-purple-500 to-purple-600 px-6 py-4">
+            <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                <i class="ri-table-line"></i> Currently Active Table Sessions
+            </h3>
+        </div>
+        <div class="p-6">
+            {% if active_sessions %}
+                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                    {% for session in active_sessions %}
+                        <div class="border border-gray-200 rounded-xl p-4 hover:shadow-md transition {% if session.is_client_identified %}bg-blue-50 border-blue-200{% endif %}">
+                            <div class="flex justify-between items-center mb-2">
+                                <span class="font-bold text-lg text-gray-800">Table {{ session.table.number }}</span>
+                                <span class="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                            </div>
+                            <p class="text-sm text-gray-600 flex items-center gap-1">
+                                <i class="ri-user-line"></i> {{ session.waiter.username|default:"Unassigned" }}
+                            </p>
+                            <p class="text-xs text-gray-400 flex items-center gap-1 mt-1">
+                                <i class="ri-time-line"></i> Since: {{ session.started_at|time:"H:i" }}
+                            </p>
+                            {% if session.is_client_identified %}
+                                <p class="text-xs text-blue-600 mt-2 flex items-center gap-1">
+                                    <i class="ri-checkbox-circle-line"></i> Customer identified
+                                </p>
+                            {% endif %}
                         </div>
-                        <p class="text-sm">Waiter: {{ session.waiter.username|default:"Unassigned" }}</p>
-                        <p class="text-xs text-gray-500">Since: {{ session.started_at|time:"H:i" }}</p>
-                        {% if session.is_client_identified %}
-                            <p class="text-xs text-blue-600 mt-1">✓ Customer identified</p>
-                        {% endif %}
-                    </div>
-                {% endfor %}
-            </div>
-        {% else %}
-            <div class="text-center py-8 text-gray-500">
-                No active table sessions
-            </div>
-        {% endif %}
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="text-center py-12 text-gray-400">
+                    <i class="ri-inbox-line text-5xl mb-2"></i>
+                    <p>No active table sessions</p>
+                </div>
+            {% endif %}
+        </div>
     </div>
 </div>
 
 <script>
-    // Show/hide custom time inputs based on shift type selection
     document.getElementById('shift_type').addEventListener('change', function() {
         const customSection = document.getElementById('custom-time-section');
-        if (this.value === 'custom') {
-            customSection.classList.remove('hidden');
-        } else {
-            customSection.classList.add('hidden');
-        }
+        customSection.classList.toggle('hidden', this.value !== 'custom');
     });
 </script>
 
