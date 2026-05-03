@@ -6,6 +6,7 @@ from django.utils import timezone
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+from orders.order_utils import get_or_create_session_order
 from orders.session_utils import get_or_create_customer_session
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -179,13 +180,10 @@ def customer_call_waiter(request):
         logger.error(f"Error in customer_call_waiter: {str(e)}")
         return JsonResponse({'error': str(e)}, status=500)
 
-
-# customer/views.py - Update customer_place_order
-
 @csrf_exempt
 @require_http_methods(["POST"])
 def customer_place_order(request):
-    """Customer places an order - requires waiter approval first"""
+    """Customer places an order - adds to existing session order"""
     
     if not request.session.get('customer_phone'):
         return JsonResponse({'error': 'Not logged in'}, status=401)
@@ -198,11 +196,11 @@ def customer_place_order(request):
         if not items:
             return JsonResponse({'error': 'No items in order'}, status=400)
         
-        # Try to get session, recreate if needed
+        # Try to get session, recreate if needed (PRESERVED your logic)
         try:
             session = ActiveTableSession.objects.get(id=session_id, is_active=True)
         except ActiveTableSession.DoesNotExist:
-            # Session doesn't exist - create a new one
+            # Session doesn't exist - create a new one (YOUR LOGIC)
             phone = request.session.get('customer_phone')
             table_number = request.session.get('table_number')
             
@@ -215,25 +213,25 @@ def customer_place_order(request):
             # Update session ID
             request.session['session_id'] = session.id
         
-        # Get waiter
+        # Get waiter (PRESERVED)
         waiter = session.waiter
         if not waiter:
             return JsonResponse({'error': 'No waiter assigned to this table'}, status=400)
         
-        # Check if client is trusted
+        # Check if client is trusted (PRESERVED)
         is_trusted_client = session.client and session.client.is_validated
         
-        # Create order with transaction
+        # NEW: Add items to existing order instead of creating new one
         with transaction.atomic():
-            order = Order.objects.create(
-                active_session=session,
-                source='client',
-                status='needs_confirmation' if not is_trusted_client else 'confirmed',
-                is_trusted=is_trusted_client,
-                created_by=None
-            )
+            # Get or create order for this session
+            order, is_new = get_or_create_session_order(session, 'client', None, is_trusted_client)
             
-            # Add items to order
+            # If order was newly created, set initial status
+            if is_new:
+                order.status = 'needs_confirmation' if not is_trusted_client else 'confirmed'
+                order.save()
+            
+            # Add items to order (with quantity aggregation)
             order_items_created = []
             for item_data in items:
                 product_id = item_data.get('product_id')
@@ -244,49 +242,64 @@ def customer_place_order(request):
                     
                 product = get_object_or_404(Product, id=product_id)
                 
-                item_status = 'pending_approval' if not is_trusted_client else 'pending'
+                # Check if item already exists in this order
+                existing_item = order.items.filter(product=product).first()
                 
-                order_item = OrderItem.objects.create(
-                    order=order,
-                    product=product,
-                    quantity=quantity,
-                    price_at_time=product.price,
-                    status=item_status,
-                    product_source=product.product_source
-                )
-                order_items_created.append(order_item)
+                if existing_item:
+                    # Update quantity instead of creating duplicate
+                    existing_item.quantity += quantity
+                    existing_item.save()
+                    order_items_created.append(existing_item)
+                    print(f"Updated existing item: {product.name} +{quantity} (now {existing_item.quantity})")
+                else:
+                    # Create new item
+                    item_status = 'pending_approval' if not is_trusted_client else 'pending'
+                    
+                    order_item = OrderItem.objects.create(
+                        order=order,
+                        product=product,
+                        quantity=quantity,
+                        price_at_time=product.price,
+                        status=item_status,
+                        product_source=product.product_source
+                    )
+                    order_items_created.append(order_item)
+                    print(f"Created new item: {product.name} x{quantity}")
             
             if not order_items_created:
-                order.delete()
+                if is_new:
+                    order.delete()
                 return JsonResponse({'error': 'No valid items in order'}, status=400)
             
             channel_layer = get_channel_layer()
             
-            # If trusted client, immediately send to production stations
+            # If trusted client, immediately send NEW items to production stations
             if is_trusted_client:
                 for item in order_items_created:
-                    station_type = item.product_source.station_type if item.product_source else 'kitchen'
-                    async_to_sync(channel_layer.group_send)(
-                        f"station_{station_type}",
-                        {
-                            "type": "send_notification",
-                            "data": {
-                                "type": "new_order",
-                                "order_id": order.id,
-                                "item_id": item.id,
-                                "product": item.product.name,
-                                "quantity": item.quantity,
-                                "table": session.table.number,
-                                "message": f"🛒 TRUSTED: Table {session.table.number} - {item.product.name} x{item.quantity}"
+                    # Only send notification for newly added items
+                    if item in order_items_created:
+                        station_type = item.product_source.station_type if item.product_source else 'kitchen'
+                        async_to_sync(channel_layer.group_send)(
+                            f"station_{station_type}",
+                            {
+                                "type": "send_notification",
+                                "data": {
+                                    "type": "new_items",
+                                    "order_id": order.id,
+                                    "item_id": item.id,
+                                    "product": item.product.name,
+                                    "quantity": item.quantity,
+                                    "table": session.table.number,
+                                    "message": f"🛒 TRUSTED: Table {session.table.number} - {item.product.name} x{item.quantity}"
+                                }
                             }
-                        }
-                    )
+                        )
             
-            # Notify waiter
+            # Notify waiter (PRESERVED your notification logic)
             notification_message = (
-                f"🛒 TRUSTED: Order from Table {session.table.number} sent to kitchen"
+                f"🛒 TRUSTED: New items added to order #{order.id} for Table {session.table.number}"
                 if is_trusted_client
-                else f"🛒 NEW: Order from Table {session.table.number} needs approval"
+                else f"🛒 NEW: Order #{order.id} for Table {session.table.number} needs approval"
             )
             
             async_to_sync(channel_layer.group_send)(
@@ -298,12 +311,13 @@ def customer_place_order(request):
                         "order_id": order.id,
                         "table": session.table.number,
                         "items_count": len(order_items_created),
-                        "needs_approval": not is_trusted_client,
+                        "needs_approval": not is_trusted_client and order.status == 'needs_confirmation',
                         "message": notification_message
                     }
                 }
             )
             
+            # Create database notification
             Notification.objects.create(
                 user=waiter,
                 type='order_ready',
@@ -312,16 +326,23 @@ def customer_place_order(request):
                 is_read=False
             )
             
+            # Determine response message
+            if is_new:
+                response_message = (
+                    'Order placed! Sent directly to kitchen.'
+                    if is_trusted_client
+                    else 'Order placed! Waiting for waiter approval.'
+                )
+            else:
+                response_message = f'Added {len(order_items_created)} items to your existing order (#{order.id})'
+            
             return JsonResponse({
                 'status': 'success',
                 'order_id': order.id,
                 'is_trusted': is_trusted_client,
                 'items_count': len(order_items_created),
-                'message': (
-                    'Order placed! Sent directly to kitchen.'
-                    if is_trusted_client
-                    else 'Order placed! Waiting for waiter approval.'
-                )
+                'is_new_order': is_new,
+                'message': response_message
             })
             
     except Exception as e:

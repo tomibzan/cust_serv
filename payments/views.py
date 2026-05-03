@@ -60,7 +60,6 @@ def create_payment_with_proof(request):
         
         # Ensure order has a legacy session for payment
         if not order.session and order.active_session:
-            # Create legacy session from active session
             from orders.models import TableSession
             legacy_session, created = TableSession.objects.get_or_create(
                 id=order.active_session.id,
@@ -74,15 +73,14 @@ def create_payment_with_proof(request):
                 }
             )
             order.session = legacy_session
-            order.save()
+            order.save(update_fields=['session'])
             print(f"✅ Created legacy session for order #{order.id}")
         
-        # Get session (now guaranteed to exist)
         session = order.session
         if not session:
             return JsonResponse({"error": "Order has no associated table session"}, status=400)
         
-        # Calculate total
+        # Calculate total - use order's total amount from items
         subtotal = float(sum(item.quantity * float(item.price_at_time) for item in order.items.all()))
         total_amount = subtotal + tip_amount
         
@@ -109,7 +107,7 @@ def create_payment_with_proof(request):
                 created_by=request.user
             )
             
-            print(f"✅ Created payment #{payment.id} for order #{order.id}")
+            print(f"✅ Created payment #{payment.id} for order #{order.id}, amount: {total_amount} ETB")
             
             # Handle payment proof
             if proof_image:
@@ -122,12 +120,14 @@ def create_payment_with_proof(request):
                     type='image',
                     image=file_path
                 )
+                print(f"📸 Saved payment proof image")
             elif proof_reference:
                 PaymentProof.objects.create(
                     payment=payment,
                     type='text',
                     reference=proof_reference
                 )
+                print(f"📝 Saved payment reference: {proof_reference}")
             
             # Notify cashiers
             channel_layer = get_channel_layer()
@@ -150,6 +150,7 @@ def create_payment_with_proof(request):
             
             # Auto-approve cash payments
             if payment_method == 'cash':
+                print(f"💵 Auto-approving cash payment #{payment.id}")
                 return approve_payment(request, payment.id)
             
             return JsonResponse({
@@ -172,7 +173,7 @@ def create_payment_with_proof(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def approve_payment(request, payment_id):
-    """Approve payment and distribute tip to waiter - but DON'T close session"""
+    """Approve payment and distribute tip to waiter - DON'T close session"""
     
     try:
         payment = get_object_or_404(Payment, id=payment_id)
@@ -192,9 +193,10 @@ def approve_payment(request, payment_id):
             # Get order and session info
             order = payment.order
             
-            # Get waiter
+            # Get waiter and table info
             waiter = None
             table_number = None
+            
             if order.active_session:
                 waiter = order.active_session.waiter
                 table_number = order.active_session.table.number
@@ -202,6 +204,7 @@ def approve_payment(request, payment_id):
                 order.active_session.is_paid = True
                 order.active_session.payment_completed_at = timezone.now()
                 order.active_session.save()
+                print(f"💰 Session {order.active_session.id} marked as paid")
             elif order.session:
                 waiter = order.session.assigned_employee
                 table_number = order.session.table.number
@@ -221,20 +224,24 @@ def approve_payment(request, payment_id):
                     message=f"✨ You received {payment.tip} ETB tip for Table {table_number}",
                     is_read=False
                 )
-                print(f"💰 Added tip {payment.tip} to waiter {waiter.username}")
+                print(f"💰 Added tip {payment.tip} to waiter {waiter.username} (New balance: {waiter.tip_balance})")
             
-            # Mark order as paid
+            # Mark the ENTIRE order as paid
             order.status = 'paid'
             order.save()
+            print(f"✅ Order #{order.id} marked as paid")
             
-            # DO NOT close the session - let it remain active for possible additional orders
-            # The session will be closed when:
-            # 1. Waiter manually clears the table
-            # 2. Customer ends session from UI
-            # 3. Auto-cleanup after grace period
-            # 4. New customer logs in (auto-replaces old session)
+            # NEW: Also mark all order items as served (consistency)
+            order.items.filter(status='ready').update(status='served')
             
-            # Notify waiter
+            # Close all notifications for this order
+            notifications_closed = Notification.objects.filter(
+                order=order, 
+                is_closed=False
+            ).update(is_closed=True)
+            print(f"🔕 Closed {notifications_closed} notifications for order #{order.id}")
+            
+            # Notify waiter via WebSocket
             channel_layer = get_channel_layer()
             
             if waiter:
@@ -252,6 +259,7 @@ def approve_payment(request, payment_id):
                         }
                     }
                 )
+                print(f"📨 Notified waiter {waiter.username}")
             
             # Notify cashiers
             async_to_sync(channel_layer.group_send)(
@@ -268,12 +276,26 @@ def approve_payment(request, payment_id):
                 }
             )
             
+            # NEW: If there are multiple orders for this session (legacy data), 
+            # check if all are paid before marking session as fully paid
+            if order.active_session:
+                unpaid_orders = Order.objects.filter(
+                    active_session=order.active_session
+                ).exclude(
+                    status='paid'
+                ).count()
+                
+                if unpaid_orders == 0:
+                    print(f"🎉 All orders for session {order.active_session.id} are paid")
+                    # Session remains active (don't close) as per your design
+            
             return JsonResponse({
                 "status": "approved",
                 "payment_id": payment.id,
                 "order_id": order.id,
                 "tip_distributed": tip_distributed,
                 "waiter_tip_balance": float(waiter.tip_balance) if waiter else 0,
+                "table": table_number,
                 "message": "Payment approved successfully"
             })
             
@@ -282,7 +304,7 @@ def approve_payment(request, payment_id):
         import traceback
         traceback.print_exc()
         return JsonResponse({"error": str(e)}, status=500)
-
+    
 @login_required
 @csrf_exempt
 @require_http_methods(["POST"])

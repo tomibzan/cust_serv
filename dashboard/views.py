@@ -11,6 +11,7 @@ from channels.layers import get_channel_layer
 from django.contrib import messages
 from django.utils import timezone
 from datetime import timedelta, datetime, date
+from orders.order_utils import get_or_create_session_order, add_items_to_session_order
 from orders.models import OrderItem, Order, ServiceRequest,TableAssignment, ActiveTableSession, Table, WorkShift, TableSession
 from products.models import Product
 from notifications.models import Notification
@@ -19,10 +20,8 @@ from django.utils import timezone
 from datetime import date
 from django.db.models import Q
 from orders.session_utils import waiter_clear_table
+from django.db.models import Sum, F, DecimalField
 
-# dashboard/views.py - Fix waiter_dashboard
-
-# dashboard/views.py - Update waiter_dashboard
 
 @login_required
 def waiter_dashboard(request):
@@ -50,14 +49,12 @@ def waiter_dashboard(request):
         
         # For each assigned table, get or create an active session
         for assignment in assigned_tables:
-            # Try to get existing active session
             session = ActiveTableSession.objects.filter(
                 table=assignment.table,
                 is_active=True
             ).first()
             
             if not session:
-                # Create active session for this table
                 session = ActiveTableSession.objects.create(
                     table=assignment.table,
                     waiter=request.user,
@@ -67,7 +64,6 @@ def waiter_dashboard(request):
                 )
                 print(f"✅ Auto-created session for Table {assignment.table.number}")
             
-            # Ensure the session has the correct waiter
             if session.waiter != request.user:
                 session.waiter = request.user
                 session.current_assignment = assignment
@@ -76,7 +72,6 @@ def waiter_dashboard(request):
             sessions.append(session)
             active_session_ids.append(session.id)
             
-            # Also create legacy session for backward compatibility
             legacy_session, _ = TableSession.objects.get_or_create(
                 id=session.id,
                 defaults={
@@ -90,62 +85,80 @@ def waiter_dashboard(request):
     else:
         messages.warning(request, "You don't have an active shift for today. Please contact the manager.")
     
+    # Get one order per session
+    session_orders = {}
+    for session in sessions:
+        order = Order.objects.filter(
+            active_session=session
+        ).exclude(
+            status='paid'
+        ).first()
+        
+        if order:
+            session_orders[session.id] = order
+    
     # Get pending orders
-    pending_by_active = Order.objects.filter(
+    pending_confirmation = Order.objects.filter(
         status='needs_confirmation',
         active_session__waiter=request.user
-    )
+    ).select_related('active_session__table').prefetch_related('items__product').order_by('-created_at')
     
-    pending_by_legacy = Order.objects.filter(
+    # Get active orders
+    active_orders = Order.objects.filter(
+        active_session__waiter=request.user
+    ).exclude(
+        status__in=['paid', 'needs_confirmation']
+    ).select_related('active_session__table').prefetch_related('items__product').order_by('-created_at')
+    
+    # Ready orders
+    ready_orders = active_orders.filter(status='ready')
+    
+    # Legacy support
+    legacy_pending = Order.objects.filter(
         status='needs_confirmation',
         session__assigned_employee=request.user
-    )
+    ).select_related('session__table').prefetch_related('items__product')
     
-    pending_by_session_id = Order.objects.filter(
-        status='needs_confirmation',
-        active_session_id__in=active_session_ids
-    )
-    
-    pending_confirmation = (pending_by_active | pending_by_legacy | pending_by_session_id).distinct().order_by('-created_at')
-    
-    # Regular orders
-    orders = Order.objects.filter(
-        status__in=['pending', 'confirmed', 'preparing', 'ready', 'served']
-    ).filter(
-        models.Q(active_session__waiter=request.user) |
-        models.Q(session__assigned_employee=request.user) |
-        models.Q(active_session_id__in=active_session_ids) |
-        models.Q(session_id__in=table_session_ids)
+    legacy_active = Order.objects.filter(
+        status__in=['pending', 'confirmed', 'preparing', 'ready', 'served'],
+        session__assigned_employee=request.user
     ).exclude(
         status='paid'
     ).exclude(
         status='needs_confirmation'
-    ).order_by('-created_at')
+    )
+    
+    pending_confirmation = (pending_confirmation | legacy_pending).distinct().order_by('-created_at')
+    active_orders = (active_orders | legacy_active).distinct().order_by('-created_at')
+    ready_orders = active_orders.filter(status='ready')
     
     notifications = request.user.notifications.filter(is_read=False).order_by('-created_at')
     service_requests = ServiceRequest.objects.filter(assigned_employee=request.user, status='pending').order_by('-created_at')
     
-    # Debug output
-    print(f"\n{'='*50}")
+    # NO assignment to property - just debug print
+    print(f"\n{'='*60}")
     print(f"WAITER DASHBOARD - {request.user.username}")
     print(f"Active shift: {current_shift.id if current_shift else 'None'}")
-    print(f"Assigned tables: {[a.table.number for a in assigned_tables] if current_shift else 'None'}")
     print(f"Active sessions: {len(sessions)}")
-    for s in sessions:
-        print(f"  - Table {s.table.number}: Session {s.id}, Active: {s.is_active}")
-    print(f"Pending orders found: {pending_confirmation.count()}")
-    print(f"{'='*50}\n")
+    print(f"Pending confirmation: {pending_confirmation.count()}")
+    print(f"Active orders: {active_orders.count()}")
+    print(f"Ready orders: {ready_orders.count()}")
+    print(f"{'='*60}\n")
     
     context = {
         "sessions": sessions,
+        "session_orders": session_orders,
         "current_shift": current_shift,
-        "orders": orders,
+        "active_orders": active_orders,
         "pending_confirmation": pending_confirmation,
+        "ready_orders": ready_orders,
         "notifications": notifications,
         "requests": service_requests,
+        "orders": active_orders,  # For template compatibility
     }
     
     return render(request, "dashboard/waiter.html", context)
+
 def _station_dashboard(request, station_type):
     # Only show items that are pending, preparing, or recently ready (last 30 minutes)
     recent_cutoff = timezone.now() - timedelta(minutes=30)
@@ -204,9 +217,9 @@ def dashboard_router(request):
         return redirect('waiter_dashboard')
     elif role == 'kitchen':
         return redirect('kitchen_dashboard')
-    elif role == 'bar':           # Add this
+    elif role == 'bar':          
         return redirect('bar_dashboard')
-    elif role == 'cafe':          # Add this
+    elif role == 'cafe':         
         return redirect('cafe_dashboard')
     elif role == 'pastry':
         return redirect('pastry_dashboard')
@@ -223,24 +236,24 @@ def dashboard_router(request):
 # =========================
 # dashboard/views.py - Fix create_order_view
 
+
 @login_required
 def create_order_view(request, session_id):
-    """Create an order for a specific table session"""
+    """Create an order for a specific table session - adds to existing order"""
     
-    # Get the active session
     try:
         session = ActiveTableSession.objects.get(id=session_id, is_active=True)
     except ActiveTableSession.DoesNotExist:
         messages.error(request, f"Session {session_id} not found")
         return redirect('waiter_dashboard')
     
-    # Verify waiter is assigned
+    # Verify waiter is authorized
     if session.waiter != request.user:
         messages.error(request, f"You are not authorized for this table")
         return redirect('waiter_dashboard')
     
-    # Ensure there's a legacy session for payment compatibility
-    legacy_session, created = TableSession.objects.get_or_create(
+    # Ensure legacy session exists for compatibility
+    legacy_session, _ = TableSession.objects.get_or_create(
         id=session.id,
         defaults={
             'table': session.table,
@@ -253,57 +266,45 @@ def create_order_view(request, session_id):
     products = Product.objects.filter(available=True).select_related('product_source')
     
     if request.method == "POST":
-        with transaction.atomic():
-            # Create order linked to BOTH session types
-            order = Order.objects.create(
-                active_session=session,
-                session=legacy_session,
-                created_by=request.user,
-                status='pending',
-                source='staff'
-            )
-            
-            order_items = []
-            for product in products:
-                qty = request.POST.get(f"product_{product.id}")
-                if qty and int(qty) > 0:
-                    order_item = OrderItem.objects.create(
-                        order=order,
-                        product=product,
-                        quantity=int(qty),
-                        price_at_time=product.price,
-                        product_source=product.product_source,
-                        status='pending'
-                    )
-                    order_items.append(order_item)
-            
-            if not order_items:
-                order.delete()
-                messages.warning(request, "No items were selected")
-                return redirect('create_order_view', session_id=session.id)
-            
-            # Notify kitchen
-            channel_layer = get_channel_layer()
-            for item in order_items:
-                station_type = item.product_source.station_type if item.product_source else 'kitchen'
-                async_to_sync(channel_layer.group_send)(
-                    f"station_{station_type}",
-                    {
-                        "type": "send_notification",
-                        "data": {
-                            "type": "new_order",
-                            "order_id": order.id,
-                            "item_id": item.id,
-                            "product": item.product.name,
-                            "quantity": item.quantity,
-                            "table": session.table.number,
-                            "message": f"New order from Table {session.table.number} - {item.product.name} x{item.quantity}"
-                        }
+        # Collect items from form
+        items_to_add = []
+        for product in products:
+            qty = request.POST.get(f"product_{product.id}")
+            if qty and int(qty) > 0:
+                items_to_add.append({
+                    'product_id': product.id,
+                    'quantity': int(qty)
+                })
+        
+        if not items_to_add:
+            messages.warning(request, "No items were selected")
+            return redirect('create_order_view', session_id=session.id)
+        
+        # Add items to session order
+        order, new_items = add_items_to_session_order(session, items_to_add, 'staff', request.user)
+        
+        # Notify kitchen stations for new items only
+        channel_layer = get_channel_layer()
+        for item in new_items:
+            station_type = item.product_source.station_type if item.product_source else 'kitchen'
+            async_to_sync(channel_layer.group_send)(
+                f"station_{station_type}",
+                {
+                    "type": "send_notification",
+                    "data": {
+                        "type": "new_items",
+                        "order_id": order.id,
+                        "item_id": item.id,
+                        "product": item.product.name,
+                        "quantity": item.quantity,
+                        "table": session.table.number,
+                        "message": f"New items for Table {session.table.number} - {item.product.name} x{item.quantity}"
                     }
-                )
-            
-            messages.success(request, f"Order #{order.id} created")
-            return redirect('waiter_dashboard')
+                }
+            )
+        
+        messages.success(request, f"Added {len(new_items)} items to order #{order.id}")
+        return redirect('waiter_dashboard')
     
     return render(request, "dashboard/create_order.html", {
         "session": session,

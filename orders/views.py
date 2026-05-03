@@ -703,14 +703,14 @@ def update_item_status(request, item_id, status):
         traceback.print_exc()
         return JsonResponse({"error": str(e)}, status=500)
 
-# orders/views.py - Fix cashier_dashboard
 
-# orders/views.py - Update cashier_dashboard
 
 @login_required
 def cashier_dashboard(request):
-    """Show orders that are ready for payment"""
+    """Show orders that are ready for payment - one order per session"""
     
+    # Get orders that have ready or served status (not paid)
+    # One order per active session
     orders = Order.objects.filter(
         status__in=['ready', 'served']
     ).exclude(
@@ -727,40 +727,85 @@ def cashier_dashboard(request):
     print(f"💰 Cashier dashboard: {orders.count()} orders ready for payment")
     
     enriched_orders = []
+    total_revenue = 0
+    total_tips_collected = 0
+    
     for order in orders:
         items_data = []
         subtotal = 0
         
+        # Calculate subtotal from all items
         for item in order.items.all():
             item_total = item.quantity * float(item.price_at_time)
             subtotal += item_total
             items_data.append({
                 'product': item.product,
+                'product_name': item.product.name,
                 'quantity': item.quantity,
                 'price_at_time': float(item.price_at_time),
+                'status': item.status,
+                'item_total': round(item_total, 2)
             })
         
         # Get table number and waiter
         table_number = None
+        waiter_name = None
+        customer_phone = None
+        
         if order.active_session:
             table_number = order.active_session.table.number
+            waiter_name = order.active_session.waiter.username if order.active_session.waiter else 'N/A'
+            customer_phone = order.active_session.client.phone if order.active_session.client else 'Walk-in'
         elif order.session:
             table_number = order.session.table.number
+            waiter_name = order.session.assigned_employee.username if order.session.assigned_employee else 'N/A'
+            customer_phone = order.session.client.phone if order.session.client else 'Walk-in'
         
         if table_number is None:
+            print(f"⚠️ Order #{order.id} has no table association, skipping")
             continue
+        
+        # Calculate item count
+        item_count = sum(item.quantity for item in order.items.all())
+        
+        # Check if all items are ready or served
+        all_items_ready = all(item.status in ['ready', 'served'] for item in order.items.all())
+        all_items_served = all(item.status == 'served' for item in order.items.all())
+        
+        # Determine if order can be paid
+        can_be_paid = all_items_ready or all_items_served or order.status in ['ready', 'served']
         
         enriched_orders.append({
             "order": order,
+            "order_id": order.id,
             "items": items_data,
+            "item_count": item_count,
             "subtotal": round(subtotal, 2),
             "table_number": table_number,
+            "waiter_name": waiter_name,
+            "customer_phone": customer_phone,
+            "status": order.status,
+            "created_at": order.created_at,
+            "can_be_paid": can_be_paid,
+            "all_items_ready": all_items_ready,
+            "all_items_served": all_items_served,
         })
+        
+        total_revenue += subtotal
+    
+    # Summary statistics
+    summary = {
+        'pending_count': len(enriched_orders),
+        'total_revenue': round(total_revenue, 2),
+        'total_orders': len(enriched_orders),
+    }
+    
+    print(f"💰 Summary: {summary['pending_count']} orders, {summary['total_revenue']} ETB")
     
     return render(request, "dashboard/cashier.html", {
-        "orders": enriched_orders
+        "orders": enriched_orders,
+        "summary": summary
     })
-
 
 @login_required
 def mark_order_paid(request, order_id):

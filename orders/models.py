@@ -144,7 +144,6 @@ class ActiveTableSession(models.Model):
         self.last_activity_at = timezone.now()
         self.save(update_fields=['last_activity_at'])
 
-
 class Order(models.Model):
     SOURCE_CHOICES = (
         ('staff', 'Staff'),
@@ -152,7 +151,6 @@ class Order(models.Model):
     )
 
     STATUS_CHOICES = (
-        ('pending_approval', 'Pending Approval'),
         ('pending', 'Pending'),
         ('needs_confirmation', 'Needs Confirmation'),
         ('confirmed', 'Confirmed'),
@@ -163,33 +161,69 @@ class Order(models.Model):
         ('cancelled', 'Cancelled'),
     )
 
-    # Foreign keys - both kept for backward compatibility
-    session = models.ForeignKey(TableSession, on_delete=models.CASCADE, null=True, blank=True)
-    active_session = models.ForeignKey(ActiveTableSession, on_delete=models.CASCADE, null=True, blank=True, related_name='orders')
+    # One order per active session
+    active_session = models.ForeignKey('ActiveTableSession', on_delete=models.CASCADE, null=True, blank=True, related_name='orders')
+    session = models.ForeignKey('TableSession', on_delete=models.CASCADE, null=True, blank=True)  # Legacy
     
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     client = models.ForeignKey('users.Client', on_delete=models.SET_NULL, null=True, blank=True)
 
     source = models.CharField(max_length=10, choices=SOURCE_CHOICES, null=True, blank=True)
-    status = models.CharField(
-        max_length=20,
-        choices=STATUS_CHOICES,
-        default='pending'
-    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
 
     is_trusted = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        # Only enforce uniqueness for non-paid statuses
+        # We'll handle this with application logic instead of database constraint
+        ordering = ['-created_at']
+        # REMOVE the unique_together constraint
+        # unique_together = ['active_session', 'status']  # ← Remove this line
 
     def __str__(self):
-        return f"Order {self.id}"
-    
+        session_info = self.active_session.table.number if self.active_session else 'Unknown'
+        return f"Order {self.id} - Table {session_info}"
+
     @property
     def table_number(self):
         if self.active_session:
             return self.active_session.table.number
-        elif self.session:
-            return self.session.table.number
         return None
+
+    @property
+    def waiter(self):
+        if self.active_session:
+            return self.active_session.waiter
+        return None
+
+    @property
+    def total_amount(self):
+        return sum(item.quantity * item.price_at_time for item in self.items.all())
+
+    def add_items(self, items_list):
+        """Add items to existing order"""
+        new_items = []
+        for item_data in items_list:
+            order_item = OrderItem.objects.create(
+                order=self,
+                product=item_data['product'],
+                quantity=item_data['quantity'],
+                price_at_time=item_data['product'].price,
+                status='pending_approval' if self.source == 'client' and not self.is_trusted else 'pending',
+                product_source=item_data['product'].product_source
+            )
+            new_items.append(order_item)
+        return new_items
+
+    def all_items_ready(self):
+        """Check if all items are ready"""
+        return all(item.status == 'ready' for item in self.items.all())
+
+    def all_items_served(self):
+        """Check if all items are served"""
+        return all(item.status == 'served' for item in self.items.all())
 
 
 class OrderItem(models.Model):
@@ -201,17 +235,15 @@ class OrderItem(models.Model):
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
-    status = models.CharField(
-        max_length=20,
-        choices=[
-            ('pending_approval', 'Pending Approval'),
-            ('pending', 'Pending'),
-            ('preparing', 'Preparing'),
-            ('ready', 'Ready'),
-            ('served', 'Served'),
-        ],
-        default='pending'
+    STATUS_CHOICES = (
+        ('pending_approval', 'Pending Approval'),  # Customer order waiting for waiter
+        ('pending', 'Pending'),  # Ready for kitchen
+        ('preparing', 'Preparing'),
+        ('ready', 'Ready'),
+        ('served', 'Served'),
     )
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
 
     product_source = models.ForeignKey(
         'products.ProductSource',
@@ -223,8 +255,6 @@ class OrderItem(models.Model):
 
     def __str__(self):
         return f"{self.product.name} x{self.quantity} (Order {self.order.id})"
-
-
 class ServiceRequest(models.Model):
     STATUS_CHOICES = (
         ('pending', 'Pending'),
