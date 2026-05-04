@@ -29,6 +29,7 @@
                         'fade-in': 'fadeIn 0.3s ease-in-out',
                         'slide-up': 'slideUp 0.3s ease-out',
                         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'bounce-subtle': 'bounce 0.5s ease',
                     },
                     keyframes: {
                         fadeIn: {
@@ -69,6 +70,12 @@
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
+        }
+        .song-card {
+            transition: all 0.2s ease;
+        }
+        .song-card:hover {
+            transform: translateX(4px);
         }
     </style>
 </head>
@@ -151,6 +158,36 @@
             {% endfor %}
         {% endfor %}
     </div>
+
+    <!-- MUSIC REQUEST SECTION -->
+    {% if session and session.table.number %}
+    <div class="mt-12 mb-8">
+        <div class="flex justify-between items-center mb-4">
+            <div class="flex items-center gap-3">
+                <i class="ri-disc-line text-2xl text-purple-600"></i>
+                <h2 class="text-2xl font-bold text-gray-800">Request a Song</h2>
+                <span id="dj-status" class="text-xs px-2 py-1 rounded-full bg-gray-200 text-gray-600">Checking...</span>
+            </div>
+            <button onclick="loadSongs()" class="text-purple-600 hover:text-purple-700">
+                <i class="ri-refresh-line text-lg"></i>
+            </button>
+        </div>
+        
+        <div id="songs-container" class="space-y-2 max-h-96 overflow-y-auto">
+            <div class="text-center py-8 text-gray-500">
+                <i class="ri-loader-4-line animate-spin text-3xl mb-2"></i>
+                <p>Loading songs...</p>
+            </div>
+        </div>
+        
+        <div class="mt-3 text-center">
+            <p class="text-xs text-gray-400 flex items-center justify-center gap-1">
+                <i class="ri-information-line"></i> 
+                Each table can vote once per song. Most requested songs get played!
+            </p>
+        </div>
+    </div>
+    {% endif %}
 
     <!-- My Orders Section -->
     <div class="mt-12 mb-8">
@@ -248,6 +285,106 @@
         setInterval(checkSession, 30000);
     });
 
+    // ==================== MUSIC FUNCTIONS ====================
+    
+    let djActive = false;
+
+    function loadSongs() {
+        fetch('/music/api/songs/')
+            .then(response => response.json())
+            .then(data => {
+                djActive = data.is_active;
+                const statusEl = document.getElementById('dj-status');
+                
+                if (data.is_active) {
+                    statusEl.innerHTML = '🎵 Voting Active';
+                    statusEl.className = 'text-xs px-2 py-1 rounded-full bg-green-100 text-green-700';
+                    displaySongs(data.songs);
+                } else {
+                    statusEl.innerHTML = '⏸️ Voting Inactive';
+                    statusEl.className = 'text-xs px-2 py-1 rounded-full bg-gray-200 text-gray-600';
+                    document.getElementById('songs-container').innerHTML = `
+                        <div class="text-center py-8 text-gray-400 bg-white rounded-xl">
+                            <i class="ri-disc-line text-5xl mb-2"></i>
+                            <p>Music voting is currently inactive. Check back later!</p>
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                console.error('Error loading songs:', error);
+                document.getElementById('songs-container').innerHTML = `
+                    <div class="text-center py-8 text-red-400 bg-white rounded-xl">
+                        <i class="ri-error-warning-line text-5xl mb-2"></i>
+                        <p>Error loading songs. Please refresh.</p>
+                    </div>
+                `;
+            });
+    }
+
+    function displaySongs(songs) {
+        const container = document.getElementById('songs-container');
+        if (!songs || songs.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-8 text-gray-400 bg-white rounded-xl">
+                    <i class="ri-music-line text-5xl mb-2"></i>
+                    <p>No songs available to request yet!</p>
+                </div>
+            `;
+            return;
+        }
+        
+        container.innerHTML = songs.map(song => `
+            <div class="song-card bg-white rounded-xl p-3 flex justify-between items-center border border-gray-100 hover:shadow-md transition">
+                <div class="flex-1">
+                    <div class="flex items-center gap-2">
+                        <i class="ri-music-2-line text-purple-500"></i>
+                        <p class="font-medium text-gray-800">${escapeHtml(song.title)}</p>
+                    </div>
+                    <p class="text-xs text-gray-500 ml-6">${escapeHtml(song.artist)}</p>
+                    ${song.votes ? `<p class="text-xs text-gray-400 ml-6 mt-1"><i class="ri-thumb-up-line"></i> ${song.votes} requests</p>` : ''}
+                </div>
+                <button onclick="voteSong(${song.id})" 
+                        class="px-4 py-2 rounded-lg text-sm font-medium transition ${song.voted ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700 text-white'}"
+                        ${song.voted ? 'disabled' : ''}>
+                    ${song.voted ? '<i class="ri-check-line"></i> Requested' : '<i class="ri-disc-line"></i> Request'}
+                </button>
+            </div>
+        `).join('');
+    }
+
+    function voteSong(songId) {
+        fetch(`/music/api/vote/${songId}/`, {
+            method: 'POST',
+            headers: { 
+                'X-CSRFToken': getCSRFToken(),
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ session_id: sessionId })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                showNotification(data.message || 'Song requested! 🎵', 'success');
+                loadSongs();
+                playSound();
+            } else {
+                showNotification(data.error || 'Error requesting song', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error voting:', error);
+            showNotification('Network error. Please try again.', 'error');
+        });
+    }
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
     // ==================== SESSION MANAGEMENT ====================
     
     function endSession() {
@@ -312,6 +449,10 @@
             if (data.type === "session_ended") {
                 showNotification('Your session has ended. Thank you!', 'info');
                 setTimeout(() => window.location.href = '/customer/login/', 3000);
+            }
+            if (data.type === "song_status_update") {
+                showNotification(`🎵 ${data.message}`, 'info');
+                loadSongs();
             }
         };
         customerSocket.onclose = () => setTimeout(connectCustomerWebSocket, 5000);
@@ -520,6 +661,13 @@
                 if (data.has_request && data.status === 'resolved') showNotification('✅ Waiter has responded to your request!', 'success');
             } catch (err) {}
         }, 10000);
+        
+        // Also poll for song updates every 30 seconds
+        setInterval(() => {
+            if (document.getElementById('dj-status') && document.getElementById('dj-status').innerHTML.includes('Voting Active')) {
+                loadSongs();
+            }
+        }, 30000);
     }
     
     // ==================== UI HELPERS ====================

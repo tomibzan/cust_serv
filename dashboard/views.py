@@ -221,8 +221,10 @@ def dashboard_router(request):
         return redirect('bar_dashboard')
     elif role == 'cafe':         
         return redirect('cafe_dashboard')
-    elif role == 'pastry':
+    elif role == 'pastry': 
         return redirect('pastry_dashboard')
+    elif role == 'dj':  # ← Add this
+        return redirect('dj_dashboard')
     elif role == 'cashier':
         return redirect('cashier_dashboard')
     elif role == 'manager' or role == 'admin':
@@ -370,6 +372,12 @@ def cashier_dashboard(request):
 # =========================
 # ✅ CONFIRM CUSTOMER ORDER (Waiter approval)
 # =========================
+
+@login_required
+def dj_station_dashboard(request):
+    """DJ Station Dashboard - shows music requests"""
+    # This can redirect to the main DJ dashboard
+    return redirect('dj_dashboard')
 
 @staff_member_required
 def manage_shifts(request):

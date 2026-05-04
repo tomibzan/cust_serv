@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     'reports',
     'dashboard',
     'customer',
+    'music',
 ]
 
 # ======================

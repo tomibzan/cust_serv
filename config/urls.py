@@ -32,4 +32,5 @@ urlpatterns = [
     path('dashboard/', include('dashboard.urls')),
     path('', include('orders.urls')),
     path('', include('dashboard.urls')),
+    path('music/', include('music.urls')),
 ]

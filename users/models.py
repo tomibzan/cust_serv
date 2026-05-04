@@ -7,7 +7,8 @@ class User(AbstractUser):
         ('kitchen', 'Kitchen Staff'),
         ('bar', 'Bar Staff'),
         ('cafe', 'Cafe Staff'),
-        ('pastry', 'Pastry Staff'), 
+        ('pastry', 'Pastry Staff'),
+        ('dj', 'DJ'),  
         ('cashier', 'Cashier'),
         ('manager', 'Manager'),
     )

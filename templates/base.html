@@ -179,6 +179,11 @@
             <i class="ri-knife-line text-2xl"></i>
             <span class="text-xs mt-1">{{ user.role }}</span>
         </a>
+        {% elif user.role == 'dj' %}
+        <a href="{% url 'dj_dashboard' %}" class="nav-link flex items-center space-x-3 px-4 py-3 rounded-xl transition-all duration-200 {% if 'dj_dashboard' in request.path %}bg-primary-50 text-primary-600{% else %}text-gray-600 hover:bg-gray-50{% endif %}">
+            <i class="ri-disc-line text-xl"></i>
+            <span class="font-medium">DJ Station</span>
+    </a>
         {% elif user.role == 'manager' %}
         <a href="{% url 'manage_shifts' %}" class="flex flex-col items-center p-2 text-primary-600">
             <i class="ri-calendar-line text-2xl"></i>

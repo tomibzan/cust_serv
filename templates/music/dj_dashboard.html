@@ -1,0 +1,233 @@
+<!-- templates/music/dj_dashboard.html -->
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex justify-between items-center">
+        <div class="flex items-center gap-3">
+            <div class="w-12 h-12 bg-gradient-to-r from-purple-500 to-pink-500 rounded-2xl flex items-center justify-center shadow-lg">
+                <i class="ri-disc-line text-white text-2xl"></i>
+            </div>
+            <div>
+                <h1 class="text-3xl font-bold text-gray-800">DJ Station</h1>
+                <p class="text-gray-500 mt-1">Manage music requests from customers</p>
+            </div>
+        </div>
+        <button onclick="toggleDJSession()" 
+                class="px-6 py-3 rounded-xl font-semibold transition flex items-center gap-2 {% if dj_session.is_active %}bg-red-500 hover:bg-red-600{% else %}bg-green-500 hover:bg-green-600{% endif %} text-white">
+            <i class="{% if dj_session.is_active %}ri-stop-circle-line{% else %}ri-play-circle-line{% endif %}"></i>
+            {% if dj_session.is_active %}Deactivate{% else %}Activate{% endif %} Music Voting
+        </button>
+    </div>
+
+    <!-- Stats -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="bg-gradient-to-r from-purple-500 to-pink-500 rounded-2xl p-5 text-white">
+            <p class="text-purple-100">Queue Length</p>
+            <p class="text-3xl font-bold">{{ playlist|length }}</p>
+        </div>
+        <div class="bg-gradient-to-r from-blue-500 to-cyan-500 rounded-2xl p-5 text-white">
+            <p class="text-blue-100">Total Requests</p>
+            <p class="text-3xl font-bold">{{ playlist|length }}</p>
+        </div>
+        <div class="bg-gradient-to-r from-green-500 to-emerald-500 rounded-2xl p-5 text-white">
+            <p class="text-green-100">Status</p>
+            <p class="text-3xl font-bold">{% if dj_session.is_active %}🎵 Active{% else %}⏸️ Inactive{% endif %}</p>
+        </div>
+    </div>
+
+    <!-- Current Playlist -->
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="bg-gradient-to-r from-purple-500 to-pink-500 px-6 py-4">
+            <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                <i class="ri-play-list-line"></i> Current Playlist Queue
+            </h2>
+        </div>
+        <div id="playlist-container" class="divide-y divide-gray-100">
+            {% for entry in playlist %}
+            <div id="playlist-{{ entry.id }}" class="p-4 flex justify-between items-center hover:bg-gray-50">
+                <div>
+                    <p class="font-bold text-gray-800">{{ entry.song.title }}</p>
+                    <p class="text-sm text-gray-500">{{ entry.song.artist }}</p>
+                    <p class="text-xs text-gray-400 mt-1">{{ entry.votes }} votes | Requested by Table {{ entry.requested_by.table.number }}</p>
+                </div>
+                <button onclick="markPlayed({{ entry.id }})" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm">
+                    Mark Played
+                </button>
+            </div>
+            {% empty %}
+            <div class="p-8 text-center text-gray-400">
+                <i class="ri-disc-line text-5xl mb-2"></i>
+                <p>No songs in queue. Waiting for customer requests!</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Song Library -->
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div class="bg-gradient-to-r from-purple-500 to-pink-500 px-6 py-4 flex justify-between items-center">
+            <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                <i class="ri-music-2-line"></i> Song Library
+            </h2>
+            <button onclick="showAddSongModal()" class="bg-white/20 hover:bg-white/30 text-white px-3 py-1 rounded-lg text-sm">
+                <i class="ri-add-line"></i> Add Song
+            </button>
+        </div>
+        <div class="divide-y divide-gray-100 max-h-96 overflow-y-auto">
+            {% for song in songs %}
+            <div class="p-4 flex justify-between items-center">
+                <div>
+                    <p class="font-bold text-gray-800">{{ song.title }}</p>
+                    <p class="text-sm text-gray-500">{{ song.artist }} • {{ song.get_genre_display }}</p>
+                </div>
+                <div class="text-right">
+                    <span class="text-sm font-semibold text-purple-600">{{ song.vote_count }} votes</span>
+                </div>
+            </div>
+            {% endfor %}
+            {% if not songs %}
+            <div class="p-8 text-center text-gray-400">
+                <i class="ri-music-2-line text-5xl mb-2"></i>
+                <p>No songs in library. Add some songs!</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Add Song Modal -->
+<div id="add-song-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+    <div class="bg-white rounded-2xl max-w-md w-full mx-4 p-6">
+        <h3 class="text-xl font-bold mb-4">Add New Song</h3>
+        <input type="text" id="song-title" placeholder="Song Title" class="w-full mb-3 p-3 border rounded-xl">
+        <input type="text" id="song-artist" placeholder="Artist Name" class="w-full mb-3 p-3 border rounded-xl">
+        <select id="song-genre" class="w-full mb-4 p-3 border rounded-xl">
+            <option value="pop">Pop</option>
+            <option value="rock">Rock</option>
+            <option value="jazz">Jazz</option>
+            <option value="electronic">Electronic</option>
+            <option value="hiphop">Hip Hop</option>
+            <option value="rnb">R&B</option>
+            <option value="ethiopian">Ethiopian</option>
+        </select>
+        <div class="flex gap-3">
+            <button onclick="addSong()" class="flex-1 bg-purple-600 text-white py-2 rounded-xl">Add</button>
+            <button onclick="closeModal()" class="flex-1 bg-gray-500 text-white py-2 rounded-xl">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<script>
+let ws;
+
+function connectWebSocket() {
+    const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+    ws = new WebSocket(protocol + window.location.host + "/ws/notifications/");
+    
+    ws.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        if (data.type === "new_vote") {
+            showToast(`🎵 New request: ${data.message}`, 'info');
+            setTimeout(() => location.reload(), 1000);
+        }
+    };
+}
+
+function toggleDJSession() {
+    fetch('/music/api/dj/toggle/', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': getCSRFToken() }
+    })
+    .then(response => response.json())
+    .then(data => {
+        showToast(data.message, 'success');
+        location.reload();
+    });
+}
+
+function markPlayed(playlistId) {
+    fetch(`/music/api/dj/mark-played/${playlistId}/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': getCSRFToken() }
+    })
+    .then(() => {
+        document.getElementById(`playlist-${playlistId}`)?.remove();
+        showToast('Song marked as played!', 'success');
+    });
+}
+
+function showAddSongModal() {
+    document.getElementById('add-song-modal').classList.remove('hidden');
+    document.getElementById('add-song-modal').classList.add('flex');
+}
+
+function closeModal() {
+    document.getElementById('add-song-modal').classList.add('hidden');
+    document.getElementById('add-song-modal').classList.remove('flex');
+}
+
+function addSong() {
+    const title = document.getElementById('song-title').value;
+    const artist = document.getElementById('song-artist').value;
+    const genre = document.getElementById('song-genre').value;
+    
+    if (!title || !artist) {
+        showToast('Please enter both title and artist', 'error');
+        return;
+    }
+    
+    fetch('/music/api/dj/add-song/', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': getCSRFToken(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, artist, genre })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            showToast(`Added "${data.song.title}"!`, 'success');
+            closeModal();
+            location.reload();
+        } else {
+            showToast(data.error || 'Error adding song', 'error');
+        }
+    });
+}
+
+function showToast(message, type) {
+    const colors = {
+        success: 'bg-green-500',
+        error: 'bg-red-500',
+        info: 'bg-blue-500'
+    };
+    
+    const toast = document.createElement('div');
+    toast.className = `fixed bottom-4 right-4 ${colors[type] || 'bg-blue-500'} text-white px-4 py-2 rounded-lg shadow-lg z-50 animate-fade-in`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transition = 'opacity 0.3s ease';
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+function getCSRFToken() {
+    return document.cookie.split('; ').find(row => row.startsWith('csrftoken='))?.split('=')[1];
+}
+
+connectWebSocket();
+</script>
+
+<style>
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+}
+</style>
+
+{% endblock %}

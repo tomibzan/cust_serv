@@ -1,6 +1,7 @@
 # notifications/consumers.py
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
+from django.contrib.auth.decorators import login_required
 from channels.db import database_sync_to_async
 from users.models import User
 
@@ -29,8 +30,9 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             'bar': 'station_bar',
             'cafe': 'station_cafe',
             'pastry': 'station_pastry',
-            'cashier': 'station_cashier',  # ← Changed to match station_* format
+            'cashier': 'station_cashier',  # Matches station_* format
             'waiter': 'station_waiter',
+            'dj': 'station_dj',  # ← Add DJ station group
         }
         
         # Add user to their specific station group
@@ -40,18 +42,51 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             self.groups.append(self.station_group)
             print(f"✅ {user.username} (role: {user.role}) joined {self.station_group}")
         
-        # 3. Add to supervisor group if user has admin/manager role
-        if user.is_staff or user.role in ['admin', 'manager', 'supervisor']:
+        # 3. Special groups for DJ and bar staff
+        if user.role in ['dj', 'bar', 'manager', 'admin']:
+            # Add to DJ notifications group for music requests
+            await self.channel_layer.group_add("dj_notifications", self.channel_name)
+            self.groups.append("dj_notifications")
+            print(f"✅ {user.username} joined dj_notifications group")
+        
+        # 4. Add to supervisor group if user has admin/manager role
+        if user.is_staff or user.role in ['admin', 'manager', 'supervisor', 'dj']:
+            # DJs also get supervisor access for music management
             await self.channel_layer.group_add("supervisors", self.channel_name)
             self.groups.append("supervisors")
             print(f"✅ {user.username} joined supervisors group")
         
-        # 4. Add to broadcast group for system-wide announcements
+        # 5. Add to broadcast group for system-wide announcements
         await self.channel_layer.group_add("broadcast", self.channel_name)
         self.groups.append("broadcast")
         
         await self.accept()
         print(f"✅ WS connected: {user.username} (role: {user.role}) in groups: {self.groups}")
+
+    async def disconnect(self, close_code):
+        # Remove from all groups this user joined
+        for group in getattr(self, "groups", []):
+            await self.channel_layer.group_discard(group, self.channel_name)
+        
+        print(f"❌ WS disconnected: {getattr(self, 'user', 'unknown')}")
+
+    async def send_notification(self, event):
+        """Send notification to WebSocket client"""
+        data = event.get("data", {})
+        
+        # Add timestamp for UI
+        from django.utils import timezone
+        if 'timestamp' not in data:
+            data['timestamp'] = str(timezone.now())
+        
+        await self.send(text_data=json.dumps(data))
+    
+    async def new_vote_notification(self, event):
+        """Special handler for DJ vote notifications"""
+        await self.send(text_data=json.dumps({
+            'type': 'new_vote',
+            **event.get('data', {})
+        }))
 
     async def disconnect(self, close_code):
         # Remove from all groups this user joined
@@ -179,7 +214,7 @@ class CustomerConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         # Get session info from scope
         session_id = self.scope['url_route']['kwargs'].get('session_id')
-        
+
         if not session_id:
             await self.close()
             return
@@ -187,28 +222,90 @@ class CustomerConsumer(AsyncWebsocketConsumer):
         self.session_id = session_id
         self.group_name = f"session_{session_id}"
         
+        # ✅ FIX: Get user from scope (Django Channels automatically adds authenticated user)
+        user = self.scope.get('user')
+        
+        # ✅ Check if user exists and has role
+        if user and user.is_authenticated and hasattr(user, 'role'):
+            if user.role in ['bar', 'manager', 'admin']:
+                await self.channel_layer.group_add("dj_notifications", self.channel_name)
+        
         # Join session group
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
         print(f"✅ Customer WebSocket connected for session {session_id}")
     
     async def disconnect(self, close_code):
+        # Leave session group
         await self.channel_layer.group_discard(self.group_name, self.channel_name)
+        
+        # Leave DJ group if was a member
+        user = self.scope.get('user')
+        if user and user.is_authenticated and hasattr(user, 'role'):
+            if user.role in ['bar', 'manager', 'admin']:
+                await self.channel_layer.group_discard("dj_notifications", self.channel_name)
+        
         print(f"❌ Customer WS disconnected for session {self.session_id}")
+    
+    async def receive(self, text_data):
+        """Handle incoming messages from customer"""
+        try:
+            data = json.loads(text_data)
+            message_type = data.get('type', '')
+            
+            if message_type == 'ping':
+                await self.send(text_data=json.dumps({'type': 'pong'}))
+            
+            elif message_type == 'mark_read':
+                notification_id = data.get('notification_id')
+                if notification_id:
+                    await self.mark_notification_read(notification_id)
+            
+        except json.JSONDecodeError:
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': 'Invalid JSON'
+            }))
     
     async def send_notification(self, event):
         """Send notification to customer"""
-        await self.send(text_data=json.dumps(event.get("data", {})))    
+        await self.send(text_data=json.dumps(event.get("data", {})))
+    
+    async def order_status_update(self, event):
+        """Send order status update to customer"""
+        await self.send(text_data=json.dumps({
+            'type': 'order_status_update',
+            'order_id': event.get('order_id'),
+            'status': event.get('status'),
+            'message': event.get('message', '')
+        }))
+    
+    async def song_status_update(self, event):
+        """Send song status update to customer"""
+        await self.send(text_data=json.dumps({
+            'type': 'song_status_update',
+            'song_id': event.get('song_id'),
+            'status': event.get('status'),
+            'message': event.get('message', '')
+        }))
 
     @database_sync_to_async
     def mark_notification_read(self, notification_id):
         """Mark a notification as read in the database"""
         from notifications.models import Notification
         from django.utils import timezone
+        from channels.db import database_sync_to_async
+        
+        # ✅ FIX: Get user from scope
+        user = self.scope.get('user')
+        
+        if not user or not user.is_authenticated:
+            return False
+        
         try:
             notification = Notification.objects.get(
                 id=notification_id,
-                recipient=self.user
+                recipient=user
             )
             notification.read = True
             notification.read_at = timezone.now()
